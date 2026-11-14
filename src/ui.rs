@@ -39,9 +39,11 @@ fn sgr(code: &'static str) -> &'static str {
 pub fn reset() -> &'static str {
     sgr("\x1b[0m")
 }
+
 pub fn bold() -> &'static str {
     sgr("\x1b[1m")
 }
+
 pub fn dim() -> &'static str {
     sgr("\x1b[2m")
 }

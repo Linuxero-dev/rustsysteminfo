@@ -4,6 +4,7 @@ use crossterm::{
     terminal,
 };
 use std::io::{self, IsTerminal, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 use sysinfo::System;
@@ -13,6 +14,12 @@ const FRAME: Duration = Duration::from_millis(50);
 const SAMPLE: Duration = Duration::from_millis(500);
 
 pub type Row = (String, String);
+
+static GOT_SIGTERM: AtomicBool = AtomicBool::new(false);
+
+unsafe extern "C" fn on_sigterm(_: libc::c_int) {
+    GOT_SIGTERM.store(true, Ordering::Relaxed);
+}
 
 pub struct Monitor {
     sys: System,
@@ -178,6 +185,9 @@ pub fn run(
     interactive: bool,
     mut render: impl FnMut(&Monitor, f64, usize, usize) -> Vec<Row>,
 ) {
+    unsafe {
+        libc::signal(libc::SIGTERM, on_sigterm as *const () as libc::sighandler_t);
+    }
     let guard = if interactive { RawGuard::new() } else { None };
     if guard.is_none() {
         return print_once(mon, &mut render);
@@ -188,6 +198,9 @@ pub fn run(
     let (mut seen, mut footer_row, mut full) = ((0, 0), 0, true);
     mon.sample();
     loop {
+        if GOT_SIGTERM.load(Ordering::Relaxed) {
+            break;
+        }
         let (cols, rows) = size();
         if (cols, rows) != seen {
             seen = (cols, rows);

@@ -15,9 +15,9 @@ use ui::{bold, dim, fit_width, reset, visible_len};
 const GAP: usize = 4;
 const HELP: &str = "rsi — información del sistema y monitor en vivo
 USO: rsi [OPCIONES]
---once       imprime una vez y sale
---no-anim    logo estático
--h, --help   muestra esta ayuda
+  --once       imprime una vez y sale
+  --no-anim    logo estático
+  -h, --help   muestra esta ayuda
 
 Por defecto permanece abierto (Enter, Esc o q para salir).";
 

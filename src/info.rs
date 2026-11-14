@@ -1,5 +1,7 @@
 use crate::ui::clean;
+use std::io::Read;
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 use std::{env, fs, path::Path, thread};
 use sysinfo::System;
 
@@ -29,15 +31,34 @@ fn read(p: impl AsRef<Path>) -> Option<String> {
 }
 
 fn run(bin: &str, args: &[&str]) -> Option<String> {
-    let o = Command::new(bin)
+    let mut child = Command::new(bin)
         .args(args)
         .stdin(Stdio::null())
         .stderr(Stdio::null())
-        .output()
+        .stdout(Stdio::piped())
+        .spawn()
         .ok()?;
-    o.status
-        .success()
-        .then(|| String::from_utf8_lossy(&o.stdout).into_owned())
+    let limit = Duration::from_secs(2);
+    let start = Instant::now();
+    loop {
+        match child.try_wait().ok()? {
+            Some(status) => {
+                if !status.success() {
+                    return None;
+                }
+                let mut out = String::new();
+                child.stdout.take()?.read_to_string(&mut out).ok()?;
+                return Some(out);
+            }
+            None => {
+                if start.elapsed() > limit {
+                    let _ = child.kill();
+                    return None;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
 }
 
 fn count_dir(path: &str) -> usize {
@@ -140,7 +161,7 @@ fn uptime(secs: u64) -> String {
         .filter(|(n, _)| *n > 0)
         .map(|(n, u)| format!("{n}{u}"))
         .chain([format!("{m}m")])
-        .collect::<Vec<_>>()
+        .collect::<Vec<String>>()
         .join(" ")
 }
 
@@ -173,6 +194,14 @@ fn packages() -> Option<String> {
             .filter(|e| e.file_name().to_string_lossy().ends_with(".snap"))
             .count()
     });
+    let nix = if Path::new("/run/current-system/sw").exists() {
+        lines(run(
+            "nix-store",
+            &["-q", "--requisites", "/run/current-system/sw"],
+        ))
+    } else {
+        0
+    };
     let counts = [
         (
             "rpm",
@@ -205,17 +234,7 @@ fn packages() -> Option<String> {
             },
         ),
         ("portage", portage),
-        (
-            "nix",
-            if Path::new("/run/current-system/sw").exists() {
-                lines(run(
-                    "nix-store",
-                    &["-q", "--requisites", "/run/current-system/sw"],
-                ))
-            } else {
-                0
-            },
-        ),
+        ("nix", nix),
         ("pkgtools", count_dir("/var/log/packages")),
         (
             "flatpak",
@@ -224,7 +243,7 @@ fn packages() -> Option<String> {
         ),
         ("snap", snaps),
     ];
-    let v: Vec<_> = counts
+    let v: Vec<String> = counts
         .iter()
         .filter(|(_, n)| *n > 0)
         .map(|(k, n)| format!("{n} ({k})"))

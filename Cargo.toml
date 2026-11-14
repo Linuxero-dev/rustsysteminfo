@@ -1,9 +1,9 @@
 [package]
 name = "rustsysteminfo"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 rust-version = "1.74"
-description = "Un clon moderno de Neofetch/Fastfetch en Rust"
+description = "Un clon moderno de Neofetch/Fastfetch en Rust con logo animado, discos con barras y RAM en vivo"
 license = "MIT"
 repository = "https://github.com/Linuxero-dev/rustsysteminfo"
 keywords = ["neofetch", "fastfetch", "system-information", "cli", "linux"]
@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 sysinfo = "0.30"
 crossterm = "0.27"
+libc = "0.2"
 
 [profile.release]
 opt-level = "z"
