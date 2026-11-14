@@ -16,6 +16,8 @@ use ui::{bold, dim, fit_width, reset, visible_len};
 
 const GAP: usize = 4;
 const DISK_TIMEOUT: Duration = Duration::from_secs(3);
+const MIN_COLS: usize = 40;
+const MIN_ROWS: usize = 12;
 
 const HELP: &str = "rsi — información del sistema y monitor en vivo
 USO: rsi [OPCIONES]
@@ -24,6 +26,39 @@ USO: rsi [OPCIONES]
 -h, --help   muestra esta ayuda
 
 Por defecto permanece abierto (Enter, Esc o q para salir).";
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Layout {
+    Side,
+    Compact,
+    TooSmall,
+}
+
+fn choose_layout(cols: usize, rows: usize, lw: usize) -> Layout {
+    if cols < MIN_COLS || rows < MIN_ROWS {
+        Layout::TooSmall
+    } else if cols.saturating_sub(1).saturating_sub(lw + GAP) >= 30 {
+        Layout::Side
+    } else {
+        Layout::Compact
+    }
+}
+
+fn too_small_rows(cols: usize, rows: usize) -> Vec<Row> {
+    let msg = vec![
+        format!("Terminal demasiado pequeña: {cols}x{rows}"),
+        format!("Mínimo necesario: {MIN_COLS}x{MIN_ROWS}"),
+        "Agranda la ventana para ver rsi.".to_string(),
+    ];
+    let pad = rows.saturating_sub(2) / 2;
+    let mut v = vec![(String::new(), String::new()); pad];
+    v.extend(
+        center(&msg, cols.saturating_sub(1))
+            .into_iter()
+            .map(|l| (l, String::new())),
+    );
+    v
+}
 
 fn right_groups(info: &Info, accent: &str, title: &str, disks: Vec<String>) -> Vec<Vec<String>> {
     let (b, d, r) = (bold(), dim(), reset());
@@ -88,14 +123,6 @@ fn compact_rows(live: &[String], right: &[String]) -> Vec<Row> {
 
 fn compose(left: &[String], lw: usize, right: &[String], cols: usize) -> Vec<Row> {
     let rw = cols.saturating_sub(1).saturating_sub(lw + GAP);
-    if rw < 30 {
-        return left
-            .iter()
-            .map(|l| (l.clone(), String::new()))
-            .chain([(String::new(), String::new())])
-            .chain(right.iter().map(|r| (String::new(), r.clone())))
-            .collect();
-    }
     let blank = " ".repeat(lw);
     (0..left.len().max(right.len()))
         .map(|i| {
@@ -164,18 +191,21 @@ fn main() -> ExitCode {
         interactive,
         |m, phase, cols, rows| {
             let live = m.lines(&accent);
-            if cols < 60 || rows < 35 {
-                return compact_rows(&live, &right_compact);
+            let (left, lw) = left_column(anim::frame(&lg, phase), live.clone(), &palette);
+            match choose_layout(cols, rows, lw) {
+                Layout::TooSmall => too_small_rows(cols, rows),
+                Layout::Compact => compact_rows(&live, &right_compact),
+                Layout::Side => {
+                    let total: usize = groups.iter().map(Vec::len).sum();
+                    let spaced_h = (total + groups.len() - 1).max(left.len());
+                    let right = if rows >= spaced_h + 2 {
+                        &right_spaced
+                    } else {
+                        &right_compact
+                    };
+                    compose(&left, lw, right, cols)
+                }
             }
-            let (left, lw) = left_column(anim::frame(&lg, phase), live, &palette);
-            let total: usize = groups.iter().map(Vec::len).sum();
-            let spaced = rows >= (total + groups.len() - 1).max(left.len()) + 2;
-            let right = if spaced {
-                &right_spaced
-            } else {
-                &right_compact
-            };
-            compose(&left, lw, right, cols)
         },
     );
 
@@ -192,23 +222,27 @@ mod tests {
     }
 
     #[test]
-    fn compose_stacks_columns_on_narrow_terminals() {
-        let rows = compose(&["L".to_string()], 10, &["R".to_string()], 40);
-        assert_eq!(
-            rows,
-            vec![
-                ("L".to_string(), String::new()),
-                (String::new(), String::new()),
-                (String::new(), "R".to_string()),
-            ]
-        );
-    }
-
-    #[test]
     fn compose_places_columns_side_by_side_on_wide_terminals() {
         let rows = compose(&["L".to_string()], 1, &["R".to_string()], 80);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].0, "L");
         assert_eq!(ui::clean(&rows[0].1), " ".repeat(GAP) + "R");
+    }
+
+    #[test]
+    fn choose_layout_prefers_side_when_the_logo_fits_beside_the_info() {
+        assert_eq!(choose_layout(120, 40, 41), Layout::Side);
+        assert_eq!(choose_layout(80, 24, 41), Layout::Side);
+    }
+
+    #[test]
+    fn choose_layout_uses_compact_when_there_is_no_room_for_the_logo() {
+        assert_eq!(choose_layout(61, 45, 41), Layout::Compact);
+    }
+
+    #[test]
+    fn choose_layout_reports_too_small_below_the_floor() {
+        assert_eq!(choose_layout(39, 30, 41), Layout::TooSmall);
+        assert_eq!(choose_layout(60, 11, 41), Layout::TooSmall);
     }
 }

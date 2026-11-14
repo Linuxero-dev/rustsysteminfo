@@ -126,7 +126,8 @@ fn footer(paused: bool) -> String {
 fn draw(frame: &[Row], paused: bool, cols: usize, rows: usize, full: bool) -> usize {
     let w = cols.saturating_sub(1);
     let n = frame.len().min(rows.saturating_sub(2));
-    let mut buf = String::from("\x1b[?2026h");
+    let mut buf = String::with_capacity(n * (w + 16) + 32);
+    buf += "\x1b[?2026h";
     if full {
         buf += "\x1b[H\x1b[2J";
     }
@@ -177,6 +178,7 @@ pub fn run(
     mut render: impl FnMut(&Monitor, f64, usize, usize) -> Vec<Row>,
 ) {
     if interactive {
+        // SAFETY: el manejador únicamente escribe un AtomicBool, seguro dentro de una señal.
         unsafe {
             for sig in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
                 libc::signal(sig, on_sigterm as *const () as libc::sighandler_t);
