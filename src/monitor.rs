@@ -194,6 +194,7 @@ pub fn run(
     let mut last = start;
     let mut paused_at: Option<Instant> = None;
     let (mut seen, mut footer_row, mut full) = ((0, 0), 0, true);
+    let mut prev_len = 0;
     mon.sample();
 
     loop {
@@ -213,7 +214,12 @@ pub fn run(
         if !paused || full {
             let t = paused_at.unwrap_or_else(Instant::now).duration_since(start);
             let phase = if animate { t.as_secs_f64() * 7.5 } else { 0.0 };
-            footer_row = draw(&render(mon, phase, cols, rows), paused, cols, rows, full);
+            let frame = render(mon, phase, cols, rows);
+            if frame.len() != prev_len {
+                prev_len = frame.len();
+                full = true;
+            }
+            footer_row = draw(&frame, paused, cols, rows, full);
             full = false;
         }
         let wait = if paused {

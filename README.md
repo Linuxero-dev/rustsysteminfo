@@ -8,3 +8,4 @@ Funciona en cualquier distribución Linux (x86_64 y ARM64) sin necesidad de tene
 
 ```sh
 curl -sSL https://raw.githubusercontent.com/Linuxero-dev/rustsysteminfo/main/install.sh | sh
+```
