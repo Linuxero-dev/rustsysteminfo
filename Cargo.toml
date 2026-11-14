@@ -1,0 +1,21 @@
+[package]
+name = "rustsysteminfo"
+version = "0.1.0"
+edition = "2021"
+description = "Un clon moderno de Neofetch/Fastfetch en Rust con logo animado, discos con barras y RAM en vivo"
+license = "MIT"
+
+[[bin]]
+name = "rsi"
+path = "src/main.rs"
+
+[dependencies]
+sysinfo = { version = "0.30", default-features = false }
+crossterm = "0.27"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "unwind"
