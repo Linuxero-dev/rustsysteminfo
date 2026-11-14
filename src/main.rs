@@ -15,7 +15,6 @@ use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 use ui::{bold, dim, fit_width, reset, visible_len};
 
 const GAP: usize = 4;
-
 const DISK_TIMEOUT: Duration = Duration::from_secs(3);
 
 const HELP: &str = "rsi — información del sistema y monitor en vivo
@@ -165,7 +164,6 @@ fn main() -> ExitCode {
         interactive,
         |m, phase, cols, rows| {
             let live = m.lines(&accent);
-
             if cols < 60 || rows < 35 {
                 return compact_rows(&live, &right_compact);
             }
@@ -211,7 +209,6 @@ mod tests {
         let rows = compose(&["L".to_string()], 1, &["R".to_string()], 80);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].0, "L");
-        // Texto visible: `fit_width` añade `reset()`, que solo está vacío sin TTY.
         assert_eq!(ui::clean(&rows[0].1), " ".repeat(GAP) + "R");
     }
 }

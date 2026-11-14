@@ -17,7 +17,7 @@ pub type Row = (String, String);
 
 static GOT_SIGTERM: AtomicBool = AtomicBool::new(false);
 
-unsafe extern "C" fn on_sigterm(_: libc::c_int) {
+extern "C" fn on_sigterm(_: libc::c_int) {
     GOT_SIGTERM.store(true, Ordering::Relaxed);
 }
 
@@ -131,19 +131,10 @@ fn draw(frame: &[Row], paused: bool, cols: usize, rows: usize, full: bool) -> us
         buf += "\x1b[H\x1b[2J";
     }
     for (i, (live, fixed)) in frame.iter().take(n).enumerate() {
-        if !full && live.is_empty() {
-            continue;
-        }
-        buf += &format!("\x1b[{};1H", i + 1);
-        buf += &if full {
-            fit_width(&format!("{live}{fixed}"), w)
-        } else {
-            fit_width(live, w)
-        };
+        buf += &format!("\x1b[{};1H\x1b[2K", i + 1);
+        buf += &fit_width(&format!("{live}{fixed}"), w);
     }
-    if full {
-        buf += &format!("\x1b[{};1H{}", n + 2, fit_width(&footer(paused), w));
-    }
+    buf += &format!("\x1b[{};1H\x1b[2K{}", n + 2, fit_width(&footer(paused), w));
     buf += "\x1b[?2026l";
     out(buf.as_bytes());
     n + 2
@@ -185,10 +176,7 @@ pub fn run(
     interactive: bool,
     mut render: impl FnMut(&Monitor, f64, usize, usize) -> Vec<Row>,
 ) {
-    // Solo en modo interactivo: en `--once` o con la salida redirigida, Ctrl+C debe
-    // seguir interrumpiendo el proceso con normalidad.
     if interactive {
-        // SAFETY: el manejador únicamente escribe un AtomicBool, algo seguro dentro de una señal.
         unsafe {
             for sig in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
                 libc::signal(sig, on_sigterm as *const () as libc::sighandler_t);
@@ -199,11 +187,13 @@ pub fn run(
     if guard.is_none() {
         return print_once(mon, &mut render);
     }
+
     let mut start = Instant::now();
     let mut last = start;
     let mut paused_at: Option<Instant> = None;
     let (mut seen, mut footer_row, mut full) = ((0, 0), 0, true);
     mon.sample();
+
     loop {
         if GOT_SIGTERM.load(Ordering::Relaxed) {
             break;
