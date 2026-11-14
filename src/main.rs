@@ -8,16 +8,21 @@ mod ui;
 use info::Info;
 use monitor::Row;
 use std::io::{self, IsTerminal};
+use std::sync::mpsc;
+use std::time::Duration;
 use std::{env, iter, process::ExitCode, thread};
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 use ui::{bold, dim, fit_width, reset, visible_len};
 
 const GAP: usize = 4;
+
+const DISK_TIMEOUT: Duration = Duration::from_secs(3);
+
 const HELP: &str = "rsi — información del sistema y monitor en vivo
 USO: rsi [OPCIONES]
-  --once       imprime una vez y sale
-  --no-anim    logo estático
-  -h, --help   muestra esta ayuda
+--once       imprime una vez y sale
+--no-anim    logo estático
+-h, --help   muestra esta ayuda
 
 Por defecto permanece abierto (Enter, Esc o q para salir).";
 
@@ -74,6 +79,14 @@ fn left_column(logo: Vec<String>, live: Vec<String>, palette: &[String]) -> (Vec
     (col, w)
 }
 
+fn compact_rows(live: &[String], right: &[String]) -> Vec<Row> {
+    live.iter()
+        .map(|line| (line.clone(), String::new()))
+        .chain([(String::new(), String::new())])
+        .chain(right.iter().map(|line| (line.clone(), String::new())))
+        .collect()
+}
+
 fn compose(left: &[String], lw: usize, right: &[String], cols: usize) -> Vec<Row> {
     let rw = cols.saturating_sub(1).saturating_sub(lw + GAP);
     if rw < 30 {
@@ -99,8 +112,12 @@ fn compose(left: &[String], lw: usize, right: &[String], cols: usize) -> Vec<Row
 
 fn main() -> ExitCode {
     let (mut once, mut animate) = (false, true);
-    for a in env::args().skip(1) {
-        match a.as_str() {
+    for a in env::args_os().skip(1) {
+        let Ok(arg) = a.into_string() else {
+            eprintln!("Opción no válida para la terminal\n\n{HELP}");
+            return ExitCode::from(2);
+        };
+        match arg.as_str() {
             "-h" | "--help" => {
                 println!("{HELP}");
                 return ExitCode::SUCCESS;
@@ -108,7 +125,7 @@ fn main() -> ExitCode {
             "--once" | "--no-live" => once = true,
             "--no-anim" => animate = false,
             o => {
-                eprintln!("Opción desconocida: {o}\n\n{HELP}");
+                eprintln!("Opción desconocida: {}\n\n{HELP}", ui::clean(o));
                 return ExitCode::from(2);
             }
         }
@@ -120,15 +137,24 @@ fn main() -> ExitCode {
             .with_memory(MemoryRefreshKind::everything()),
     );
 
-    let (info, disk_list) = thread::scope(|s| {
-        let h = s.spawn(disks::collect);
-        (info::gather(&sys), h.join().unwrap_or_default())
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(disks::collect());
     });
+
+    let info = info::gather(&sys);
+    let disk_lines = match rx.recv_timeout(DISK_TIMEOUT) {
+        Ok(list) => disks::lines(&list),
+        Err(_) => vec![disks::timeout_line()],
+    };
 
     let lg = logo::for_distro(&info.distro_id, info.id_like.as_deref());
     let accent = anim::accent(lg.hue);
     let title = anim::accent(lg.hue + 180.0);
-    let groups = right_groups(&info, &accent, &title, disks::lines(&disk_list));
+    let groups = right_groups(&info, &accent, &title, disk_lines);
+
+    let right_spaced = groups.join(&String::new());
+    let right_compact = groups.concat();
     let palette = ui::palette();
     let mut mon = monitor::Monitor::new(sys);
     let interactive = io::stdout().is_terminal() && !once;
@@ -138,17 +164,54 @@ fn main() -> ExitCode {
         animate && interactive,
         interactive,
         |m, phase, cols, rows| {
-            let (left, lw) = left_column(anim::frame(&lg, phase), m.lines(&accent), &palette);
+            let live = m.lines(&accent);
+
+            if cols < 60 || rows < 35 {
+                return compact_rows(&live, &right_compact);
+            }
+            let (left, lw) = left_column(anim::frame(&lg, phase), live, &palette);
             let total: usize = groups.iter().map(Vec::len).sum();
             let spaced = rows >= (total + groups.len() - 1).max(left.len()) + 2;
             let right = if spaced {
-                groups.join(&String::new())
+                &right_spaced
             } else {
-                groups.concat()
+                &right_compact
             };
-            compose(&left, lw, &right, cols)
+            compose(&left, lw, right, cols)
         },
     );
 
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn center_pads_lines_to_the_requested_width() {
+        assert_eq!(center(&["ab".to_string()], 6), vec!["  ab  ".to_string()]);
+    }
+
+    #[test]
+    fn compose_stacks_columns_on_narrow_terminals() {
+        let rows = compose(&["L".to_string()], 10, &["R".to_string()], 40);
+        assert_eq!(
+            rows,
+            vec![
+                ("L".to_string(), String::new()),
+                (String::new(), String::new()),
+                (String::new(), "R".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn compose_places_columns_side_by_side_on_wide_terminals() {
+        let rows = compose(&["L".to_string()], 1, &["R".to_string()], 80);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, "L");
+        // Texto visible: `fit_width` añade `reset()`, que solo está vacío sin TTY.
+        assert_eq!(ui::clean(&rows[0].1), " ".repeat(GAP) + "R");
+    }
 }

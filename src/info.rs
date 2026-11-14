@@ -1,9 +1,23 @@
 use crate::ui::clean;
 use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
-use std::{env, fs, path::Path, thread};
+use std::{env, fs, thread};
 use sysinfo::System;
+
+const TRUSTED_BIN_DIRS: &[&str] = &[
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+    "/usr/local/bin",
+    "/run/current-system/sw/bin",
+    "/run/wrappers/bin",
+];
+
+const MAX_OUTPUT: u64 = 16 * 1024 * 1024;
 
 pub struct Section {
     pub title: &'static str,
@@ -30,35 +44,57 @@ fn read(p: impl AsRef<Path>) -> Option<String> {
     (!s.is_empty()).then(|| s.to_string())
 }
 
+fn find_bin(bin: &str) -> Option<PathBuf> {
+    if let Some(p) = TRUSTED_BIN_DIRS
+        .iter()
+        .map(|d| Path::new(d).join(bin))
+        .find(|p| p.is_file())
+    {
+        return Some(p);
+    }
+
+    if unsafe { libc::geteuid() } == 0 {
+        None
+    } else {
+        Some(PathBuf::from(bin))
+    }
+}
+
 fn run(bin: &str, args: &[&str]) -> Option<String> {
-    let mut child = Command::new(bin)
+    let mut child = Command::new(find_bin(bin)?)
         .args(args)
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .stdout(Stdio::piped())
         .spawn()
         .ok()?;
+
+    let stdout = child.stdout.take()?;
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout.take(MAX_OUTPUT).read_to_end(&mut buf);
+        let _ = tx.send(buf);
+    });
+
     let limit = Duration::from_secs(2);
     let start = Instant::now();
-    loop {
-        match child.try_wait().ok()? {
-            Some(status) => {
-                if !status.success() {
-                    return None;
-                }
-                let mut out = String::new();
-                child.stdout.take()?.read_to_string(&mut out).ok()?;
-                return Some(out);
-            }
-            None => {
-                if start.elapsed() > limit {
-                    let _ = child.kill();
-                    return None;
-                }
-                thread::sleep(Duration::from_millis(50));
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if start.elapsed() <= limit => thread::sleep(Duration::from_millis(20)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
             }
         }
-    }
+    };
+
+    let buf = rx.recv_timeout(Duration::from_millis(500)).ok()?;
+    status
+        .success()
+        .then(|| String::from_utf8_lossy(&buf).into_owned())
 }
 
 fn count_dir(path: &str) -> usize {
@@ -93,8 +129,9 @@ fn ini(path: &str, section: &str, key: &str) -> Option<String> {
 
 fn cfg(rel: &str) -> String {
     let base = var("XDG_CONFIG_HOME")
-        .unwrap_or_else(|| format!("{}/.config", var("HOME").unwrap_or_default()));
-    format!("{base}/{rel}")
+        .filter(|p| Path::new(p).is_absolute())
+        .or_else(|| var("HOME").map(|h| format!("{h}/.config")));
+    base.map_or_else(String::new, |b| format!("{b}/{rel}"))
 }
 
 fn section(title: &'static str, rows: Vec<(&'static str, Option<String>)>) -> Option<Section> {
@@ -585,5 +622,63 @@ pub fn gather(sys: &System) -> Info {
         distro_id: id.unwrap_or_else(|| "linux".into()),
         id_like: like,
         sections: sections.into_iter().flatten().collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_reads_output_larger_than_the_pipe_buffer() {
+        let out = run("seq", &["1", "100000"]).expect("seq debería funcionar");
+        assert_eq!(out.lines().count(), 100_000);
+    }
+
+    #[test]
+    fn run_kills_commands_that_take_too_long() {
+        let t = Instant::now();
+        assert!(run("sleep", &["10"]).is_none());
+        assert!(t.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn run_returns_none_for_failing_or_missing_commands() {
+        assert!(run("false", &[]).is_none());
+        assert!(run("rsi-comando-que-no-existe", &[]).is_none());
+    }
+
+    #[test]
+    fn uptime_formats_days_hours_and_minutes() {
+        assert_eq!(uptime(59), "0m");
+        assert_eq!(uptime(3600), "1h 0m");
+        assert_eq!(uptime(90_061), "1d 1h 1m");
+    }
+
+    #[test]
+    fn font_extracts_name_and_size() {
+        assert_eq!(font("Noto Sans,10,-1,5,50,0,0,0,0,0"), "Noto Sans (10pt)");
+        assert_eq!(font("Inter"), "Inter");
+        assert_eq!(font("Cantarell 11"), "Cantarell 11");
+    }
+
+    #[test]
+    fn junk_detects_placeholder_dmi_values() {
+        assert!(junk("To Be Filled By O.E.M."));
+        assert!(junk("Default string"));
+        assert!(junk("Unknown"));
+        assert!(!junk("ThinkPad X1 Carbon"));
+    }
+
+    #[test]
+    fn ini_reads_the_requested_section_and_key() {
+        let path = env::temp_dir().join(format!("rsi-test-{}.ini", std::process::id()));
+        fs::write(&path, "[A]\nk = uno\n[B]\nk = dos\nvacio =\n").unwrap();
+        let p = path.to_string_lossy();
+        assert_eq!(ini(&p, "A", "k").as_deref(), Some("uno"));
+        assert_eq!(ini(&p, "B", "k").as_deref(), Some("dos"));
+        assert_eq!(ini(&p, "B", "vacio"), None);
+        assert_eq!(ini(&p, "C", "k"), None);
+        let _ = fs::remove_file(&path);
     }
 }

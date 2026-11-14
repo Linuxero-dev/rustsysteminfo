@@ -17,13 +17,10 @@ fn mode() -> Mode {
             Mode::Off
         } else if colorterm.contains("truecolor") || colorterm.contains("24bit") {
             Mode::True
-        } else if matches!(
-            term.as_str(),
-            "linux" | "vt100" | "vt220" | "xterm" | "screen"
-        ) {
-            Mode::Ansi16
+        } else if term.is_empty() {
+            Mode::Off
         } else {
-            Mode::True
+            Mode::Ansi16
         }
     })
 }
@@ -106,30 +103,72 @@ pub fn spark(values: &[f64], width: usize) -> String {
     s + reset()
 }
 
+fn skip_ansi_sequence<I: Iterator<Item = char>>(it: &mut std::iter::Peekable<I>) {
+    match it.peek().copied() {
+        Some('[') => {
+            it.next();
+            for ch in it.by_ref() {
+                if ch.is_ascii() && (b'@'..=b'~').contains(&(ch as u8)) {
+                    break;
+                }
+            }
+        }
+        Some(']') => {
+            it.next();
+            while let Some(ch) = it.next() {
+                if ch == '\u{7}' || (ch == '\u{1b}' && it.next_if_eq(&'\\').is_some()) {
+                    break;
+                }
+            }
+        }
+        Some('P') | Some('X') | Some('^') | Some('_') => {
+            it.next();
+            while let Some(ch) = it.next() {
+                if ch == '\u{1b}' && it.next_if_eq(&'\\').is_some() {
+                    break;
+                }
+            }
+        }
+        _ => {
+            let _ = it.next();
+        }
+    }
+}
+
 pub fn clean(s: &str) -> String {
-    s.chars()
-        .filter(|c| {
-            !c.is_control()
-                && !matches!(
-                    c,
-                    '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
-                )
-        })
-        .collect()
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '\u{1b}' {
+            skip_ansi_sequence(&mut it);
+            continue;
+        }
+
+        if !c.is_control()
+            && !matches!(
+                c,
+                '\u{00AD}'
+            | '\u{061C}'
+            | '\u{180E}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{2028}'..='\u{202E}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{FEFF}'
+            )
+        {
+            out.push(c);
+        }
+    }
+    out
 }
 
 fn scan(s: &str, max: usize) -> (String, usize) {
     let (mut out, mut n) = (String::with_capacity(s.len()), 0);
-    let mut it = s.chars();
+    let mut it = s.chars().peekable();
     while let Some(c) = it.next() {
-        if c == '\x1b' {
-            out.push(c);
-            for d in it.by_ref() {
-                out.push(d);
-                if d.is_ascii_alphabetic() {
-                    break;
-                }
-            }
+        if c == '\u{1b}' {
+            skip_ansi_sequence(&mut it);
         } else if !c.is_control() {
             if n == max {
                 break;
@@ -146,7 +185,11 @@ pub fn visible_len(s: &str) -> usize {
 }
 
 pub fn fit_width(s: &str, max: usize) -> String {
-    let mut out = scan(s, max).0;
+    let mut out = if visible_len(s) <= max {
+        s.to_string()
+    } else {
+        scan(s, max).0
+    };
     out.push_str(reset());
     out
 }
@@ -184,5 +227,70 @@ pub fn human(bytes: u64, prec: usize) -> String {
         format!("{bytes} B")
     } else {
         format!("{v:.prec$} {}", UNITS[i])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{bar, clean, fit_width, human, spark, trunc, visible_len};
+
+    #[test]
+    fn clean_removes_invisible_and_bidi_characters() {
+        assert_eq!(
+            clean("a\u{202E}b\u{200B}c\u{FEFF}d\u{2028}e\u{061C}f"),
+            "abcdef"
+        );
+        assert_eq!(clean("ñandú — ok"), "ñandú — ok");
+    }
+
+    #[test]
+    fn human_formats_binary_units() {
+        assert_eq!(human(0, 1), "0 B");
+        assert_eq!(human(1024, 1), "1.0 KiB");
+        assert_eq!(human(1536, 1), "1.5 KiB");
+        assert_eq!(human(5 * 1024 * 1024 * 1024, 1), "5.0 GiB");
+    }
+
+    #[test]
+    fn trunc_shortens_with_an_ellipsis() {
+        assert_eq!(trunc("abc", 3), "abc");
+        assert_eq!(trunc("hello", 3), "he…");
+    }
+
+    #[test]
+    fn bar_and_spark_clamp_out_of_range_values() {
+        assert_eq!(visible_len(&bar(f64::NAN, 4)), 4);
+        assert_eq!(visible_len(&bar(2.0, 4)), 4);
+        assert_eq!(visible_len(&bar(-1.0, 4)), 4);
+        assert_eq!(visible_len(&spark(&[0.0, 0.5, 1.0, 9.0], 8)), 8);
+    }
+
+    #[test]
+    fn clean_removes_csi_and_osc_sequences() {
+        let input = "before\x1b[31mred\x1b[0m\x1b]0;terminal title\x07after";
+        assert_eq!(clean(input), "beforeredafter");
+    }
+
+    #[test]
+    fn clean_removes_string_terminator_osc_and_control_characters() {
+        let input = "a\x1b]8;;https://example.test\x1b\\linked\x1b]8;;\x1b\\b\n";
+        assert_eq!(clean(input), "alinkedb");
+    }
+
+    #[test]
+    fn visible_len_ignores_escape_sequences() {
+        assert_eq!(visible_len("\x1b[1mhello\x1b[0m"), 5);
+    }
+
+    #[test]
+    fn fit_width_keeps_color_when_the_line_fits() {
+        let out = fit_width("\x1b[31mrojo\x1b[0m", 10);
+        assert!(out.contains("\x1b[31m"));
+        assert_eq!(visible_len(&out), 4);
+    }
+
+    #[test]
+    fn fit_width_truncates_to_the_visible_width() {
+        assert_eq!(visible_len(&fit_width("\x1b[31mabcdef\x1b[0m", 3)), 3);
     }
 }

@@ -185,8 +185,15 @@ pub fn run(
     interactive: bool,
     mut render: impl FnMut(&Monitor, f64, usize, usize) -> Vec<Row>,
 ) {
-    unsafe {
-        libc::signal(libc::SIGTERM, on_sigterm as *const () as libc::sighandler_t);
+    // Solo en modo interactivo: en `--once` o con la salida redirigida, Ctrl+C debe
+    // seguir interrumpiendo el proceso con normalidad.
+    if interactive {
+        // SAFETY: el manejador únicamente escribe un AtomicBool, algo seguro dentro de una señal.
+        unsafe {
+            for sig in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+                libc::signal(sig, on_sigterm as *const () as libc::sighandler_t);
+            }
+        }
     }
     let guard = if interactive { RawGuard::new() } else { None };
     if guard.is_none() {

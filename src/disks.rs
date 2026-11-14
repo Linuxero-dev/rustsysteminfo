@@ -29,6 +29,7 @@ const SKIP_FS: &[&str] = &[
     "fuse.portal",
     "fuse.gvfsd-fuse",
 ];
+
 const SKIP_MOUNT: &[&str] = &[
     "/snap",
     "/var/lib/docker",
@@ -43,6 +44,13 @@ pub struct DiskInfo {
     total: u64,
 }
 
+fn under(mount: &str, prefix: &str) -> bool {
+    mount == prefix
+        || mount
+            .strip_prefix(prefix)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
 pub fn collect() -> Vec<DiskInfo> {
     let disks = Disks::new_with_refreshed_list();
     let mut seen = HashSet::new();
@@ -55,7 +63,7 @@ pub fn collect() -> Vec<DiskInfo> {
             let mount = d.mount_point().to_string_lossy().into_owned();
             let skip = total == 0
                 || SKIP_FS.contains(&fs.as_str())
-                || SKIP_MOUNT.iter().any(|p| mount.starts_with(p));
+                || SKIP_MOUNT.iter().any(|p| under(&mount, p));
             (!skip && seen.insert((d.name().to_owned(), total))).then(|| DiskInfo {
                 mount: clean(&mount),
                 fs: clean(&fs),
@@ -74,6 +82,10 @@ fn label(mount: &str) -> String {
         &format!("…/{}", mount.rsplit('/').next().unwrap_or(mount)),
         11,
     )
+}
+
+pub fn timeout_line() -> String {
+    format!("{}Tiempo agotado leyendo los discos{}", dim(), reset())
 }
 
 pub fn lines(disks: &[DiskInfo]) -> Vec<String> {
@@ -97,4 +109,41 @@ pub fn lines(disks: &[DiskInfo]) -> Vec<String> {
             )
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn under_matches_whole_path_components_only() {
+        assert!(under("/snap", "/snap"));
+        assert!(under("/snap/core/1234", "/snap"));
+        assert!(!under("/snapshots", "/snap"));
+        assert!(!under("/home/snap", "/snap"));
+    }
+
+    #[test]
+    fn label_keeps_short_mounts_and_truncates_long_ones() {
+        assert_eq!(label("/"), "/");
+        assert_eq!(label("/home"), "/home");
+        let long = label("/run/media/usuario/Disco con nombre largo");
+        assert_eq!(long.chars().count(), 11);
+        assert!(long.ends_with('…'));
+    }
+
+    #[test]
+    fn lines_reports_usage_and_handles_no_disks() {
+        assert_eq!(lines(&[]).len(), 1);
+        let disk = DiskInfo {
+            mount: "/".into(),
+            fs: "ext4".into(),
+            used: 50,
+            total: 100,
+        };
+        let out = lines(&[disk]);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].contains("ext4"));
+        assert!(out[0].contains("50%"));
+    }
 }

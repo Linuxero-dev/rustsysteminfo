@@ -825,3 +825,26 @@ pub fn for_distro(id: &str, id_like: Option<&str>) -> Logo {
         hue: 50.0,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn known_distro_ids_pick_their_logo() {
+        assert_eq!(for_distro("Ubuntu", None).hue, 20.0);
+        assert_eq!(for_distro("arch", None).hue, 200.0);
+    }
+
+    #[test]
+    fn id_like_is_used_as_fallback() {
+        assert_eq!(for_distro("distro-rara", Some("foo arch")).hue, 200.0);
+    }
+
+    #[test]
+    fn unknown_distros_get_tux() {
+        let logo = for_distro("distro-rara", Some("otra-rara"));
+        assert_eq!(logo.hue, 50.0);
+        assert_eq!(logo.lines, TUX);
+    }
+}
