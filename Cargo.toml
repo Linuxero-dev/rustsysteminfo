@@ -1,16 +1,20 @@
 [package]
 name = "rustsysteminfo"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Un clon moderno de Neofetch/Fastfetch en Rust con logo animado, discos con barras y RAM en vivo"
+rust-version = "1.74"
+description = "Un clon moderno de Neofetch/Fastfetch en Rust"
 license = "MIT"
+repository = "https://github.com/Linuxero-dev/rustsysteminfo"
+keywords = ["neofetch", "fastfetch", "system-information", "cli", "linux"]
+categories = ["command-line-utilities"]
 
 [[bin]]
 name = "rsi"
 path = "src/main.rs"
 
 [dependencies]
-sysinfo = { version = "0.30", default-features = false }
+sysinfo = "0.30"
 crossterm = "0.27"
 
 [profile.release]
