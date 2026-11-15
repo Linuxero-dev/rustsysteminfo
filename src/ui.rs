@@ -223,11 +223,48 @@ pub fn visible_len(s: &str) -> usize {
     scan(s, usize::MAX).1
 }
 
+/// Recorta a `max` columnas conservando los códigos de color y estilo (SGR);
+/// cualquier otra secuencia de escape se descarta.
+fn truncate_keep_sgr(s: &str, max: usize) -> String {
+    let (mut out, mut n) = (String::with_capacity(s.len()), 0);
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '\u{1b}' {
+            if it.next_if_eq(&'[').is_some() {
+                let mut params = String::new();
+                let mut last = None;
+                for ch in it.by_ref() {
+                    if ch.is_ascii() && (b'@'..=b'~').contains(&(ch as u8)) {
+                        last = Some(ch);
+                        break;
+                    }
+                    params.push(ch);
+                }
+                if last == Some('m') && params.bytes().all(|b| b.is_ascii_digit() || b == b';') {
+                    out.push_str("\x1b[");
+                    out.push_str(&params);
+                    out.push('m');
+                }
+            } else {
+                skip_ansi_sequence(&mut it);
+            }
+        } else if !c.is_control() {
+            let w = char_width(c);
+            if n + w > max {
+                break;
+            }
+            out.push(c);
+            n += w;
+        }
+    }
+    out
+}
+
 pub fn fit_width(s: &str, max: usize) -> String {
     let mut out = if visible_len(s) <= max {
         s.to_string()
     } else {
-        scan(s, max).0
+        truncate_keep_sgr(s, max)
     };
     out.push_str(reset());
     out
@@ -285,7 +322,7 @@ pub fn human(bytes: u64, prec: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{bar, clean, fit_width, human, pad, rgb_to_256, spark, trunc, visible_len};
+    use super::{bar, clean, fit_width, human, pad, reset, rgb_to_256, spark, trunc, visible_len};
 
     #[test]
     fn clean_removes_invisible_and_bidi_characters() {
@@ -358,6 +395,16 @@ mod tests {
         assert_eq!(rgb_to_256(255, 255, 255), 231);
         assert_eq!(rgb_to_256(255, 0, 0), 196);
         assert_eq!(rgb_to_256(0, 255, 0), 46);
+    }
+
+    #[test]
+    fn fit_width_keeps_color_when_it_has_to_truncate() {
+        let out = fit_width("\x1b[1m\x1b[34mGPU\x1b[0m  AMD Radeon Vega", 10);
+        assert!(out.starts_with("\x1b[1m\x1b[34mGPU\x1b[0m"));
+        assert_eq!(visible_len(&out), 10);
+        assert!(out.ends_with(reset()));
+        let out = fit_width("\x1b]0;titulo\x07\x1b[2Jabcdef", 3);
+        assert_eq!(out, format!("abc{}", reset()));
     }
 
     #[test]
