@@ -1,6 +1,6 @@
 [package]
 name = "rustsysteminfo"
-version = "0.2.5"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.74"
 description = "Un clon moderno de Neofetch/Fastfetch en Rust con logo animado, discos con barras y RAM en vivo"

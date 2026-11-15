@@ -808,6 +808,56 @@ fn match_id(id: &str) -> Option<Logo> {
     }
 }
 
+/// Nombres que acepta `--logo` (identificadores principales de `match_id`, más `tux`).
+pub const NAMES: &[&str] = &[
+    "alpine",
+    "almalinux",
+    "arch",
+    "artix",
+    "bazzite",
+    "cachyos",
+    "centos",
+    "debian",
+    "deepin",
+    "devuan",
+    "elementary",
+    "endeavouros",
+    "fedora",
+    "garuda",
+    "gentoo",
+    "kali",
+    "linuxmint",
+    "mageia",
+    "manjaro",
+    "mx",
+    "neon",
+    "nixos",
+    "nobara",
+    "opensuse",
+    "parrot",
+    "pop",
+    "rhel",
+    "rocky",
+    "slackware",
+    "solus",
+    "steamos",
+    "tux",
+    "ubuntu",
+    "void",
+    "zorin",
+];
+
+pub fn by_name(name: &str) -> Option<Logo> {
+    let lower = name.to_ascii_lowercase();
+    if lower == "tux" {
+        return Some(Logo {
+            lines: TUX,
+            hue: 50.0,
+        });
+    }
+    match_id(&lower)
+}
+
 pub fn for_distro(id: &str, id_like: Option<&str>) -> Logo {
     let lower = id.to_ascii_lowercase();
     if let Some(logo) = match_id(&lower) {
@@ -839,6 +889,15 @@ mod tests {
     #[test]
     fn id_like_is_used_as_fallback() {
         assert_eq!(for_distro("distro-rara", Some("foo arch")).hue, 200.0);
+    }
+
+    #[test]
+    fn every_listed_name_resolves_to_a_logo() {
+        for n in NAMES {
+            assert!(by_name(n).is_some(), "logo sin definir: {n}");
+        }
+        assert!(by_name("ARCH").is_some());
+        assert!(by_name("no-existe").is_none());
     }
 
     #[test]

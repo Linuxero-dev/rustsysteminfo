@@ -192,6 +192,7 @@ pub fn run(
 
     let mut start = Instant::now();
     let mut last = start;
+    let mut last_draw = start;
     let mut paused_at: Option<Instant> = None;
     let (mut seen, mut footer_row, mut full) = ((0, 0), 0, true);
     let mut prev_len = 0;
@@ -207,11 +208,16 @@ pub fn run(
             full = true;
         }
         let paused = paused_at.is_some();
+        let mut sampled = false;
         if !paused && last.elapsed() >= SAMPLE {
             mon.sample();
             last = Instant::now();
+            sampled = true;
         }
-        if !paused || full {
+        // Solo se redibuja cuando toca (muestra nueva o fotograma de la animación):
+        // los eventos del ratón o del teclado no deben provocar un dibujo cada uno.
+        let tick = animate && last_draw.elapsed() >= FRAME;
+        if full || (!paused && (sampled || tick)) {
             let t = paused_at.unwrap_or_else(Instant::now).duration_since(start);
             let phase = if animate { t.as_secs_f64() * 7.5 } else { 0.0 };
             let frame = render(mon, phase, cols, rows);
@@ -221,11 +227,12 @@ pub fn run(
             }
             footer_row = draw(&frame, paused, cols, rows, full);
             full = false;
+            last_draw = Instant::now();
         }
         let wait = if paused {
             SAMPLE
         } else if animate {
-            FRAME
+            FRAME.saturating_sub(last_draw.elapsed())
         } else {
             SAMPLE.saturating_sub(last.elapsed())
         };
@@ -250,5 +257,30 @@ pub fn run(
             },
             Err(_) => break,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, modifiers)
+    }
+
+    #[test]
+    fn quit_keys_are_enter_esc_q_and_ctrl_c() {
+        for code in [KeyCode::Enter, KeyCode::Esc, KeyCode::Char('q')] {
+            assert!(is_quit(&key(code, KeyModifiers::NONE)));
+        }
+        assert!(is_quit(&key(KeyCode::Char('c'), KeyModifiers::CONTROL)));
+        assert!(!is_quit(&key(KeyCode::Char('c'), KeyModifiers::NONE)));
+        assert!(!is_quit(&key(KeyCode::Char(' '), KeyModifiers::NONE)));
+    }
+
+    #[test]
+    fn footer_changes_with_the_paused_state() {
+        assert!(footer(true).contains("PAUSADO"));
+        assert!(!footer(false).contains("PAUSADO"));
     }
 }

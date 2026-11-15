@@ -1,4 +1,4 @@
-.TH RSI 1 "2026-11-14" "Linuxero-dev" "Manual del Usuario"
+.TH RSI 1 "2026-11-15" "Linuxero-dev" "Manual del Usuario"
 .SH NOMBRE
 rsi \- muestra informacion del sistema con logo animado y metricas en vivo
 .SH SINOPSIS
@@ -9,14 +9,38 @@ rsi \- muestra informacion del sistema con logo animado y metricas en vivo
 (rustsysteminfo) es un clon moderno de Neofetch y Fastfetch escrito en Rust.
 .SH OPCIONES
 .TP
+.BR \-h ", " \-\-help
+Muestra ayuda y sale.
+.TP
+.BR \-V ", " \-\-version
+Muestra la version y sale.
+.TP
 .B \-\-once
 Imprime la informacion una sola vez y finaliza.
 .TP
 .B \-\-no\-anim
 Muestra el logo estatico.
 .TP
-.BR \-h ", " \-\-help
-Muestra ayuda y sale.
+.BI \-\-logo " NOMBRE"
+Fuerza un logo en lugar del de la distribucion detectada.
+.TP
+.B \-\-no\-logo
+No muestra el logo.
+.TP
+.B \-\-list\-logos
+Lista los logos disponibles.
+.TP
+.BI \-\-no\- MODULO
+Oculta un modulo, por ejemplo
+.B \-\-no\-ip
+o
+.BR \-\-no\-gpu .
+.TP
+.BI \-\-hide " MOD1,MOD2"
+Oculta varios modulos a la vez.
+.TP
+.B \-\-list\-modules
+Lista los modulos que se pueden ocultar.
 .SH CONTROLES
 .TP
 .B Espacio
@@ -24,6 +48,10 @@ Pausa/reanuda.
 .TP
 .BR Enter ", " Esc ", " q
 Sale.
+.SH ENTORNO
+.TP
+.B NO_COLOR
+Si esta definida, desactiva los colores.
 .SH AUTORES
 Linuxero-dev.
 .SH LICENCIA

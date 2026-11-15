@@ -19,6 +19,36 @@ const TRUSTED_BIN_DIRS: &[&str] = &[
 
 const MAX_OUTPUT: u64 = 16 * 1024 * 1024;
 
+/// Identificadores de módulo que se pueden ocultar con `--no-<módulo>` o `--hide`.
+pub const MODULES: &[&str] = &[
+    "os",
+    "host",
+    "kernel",
+    "uptime",
+    "init",
+    "processes",
+    "load",
+    "packages",
+    "shell",
+    "terminal",
+    "locale",
+    "ip",
+    "de",
+    "display",
+    "theme",
+    "icons",
+    "font",
+    "cpu",
+    "gpu",
+    "battery",
+    "disks",
+    "colors",
+];
+
+pub fn is_hidden(hidden: &[String], id: &str) -> bool {
+    hidden.iter().any(|h| h == id)
+}
+
 pub struct Section {
     pub title: &'static str,
     pub rows: Vec<(&'static str, String)>,
@@ -134,10 +164,13 @@ fn cfg(rel: &str) -> String {
     base.map_or_else(String::new, |b| format!("{b}/{rel}"))
 }
 
-fn section(title: &'static str, rows: Vec<(&'static str, Option<String>)>) -> Option<Section> {
+type RawRow = (&'static str, &'static str, Option<String>);
+
+fn section(title: &'static str, hidden: &[String], rows: Vec<RawRow>) -> Option<Section> {
     let rows: Vec<(&'static str, String)> = rows
         .into_iter()
-        .filter_map(|(k, v)| v.map(|val| (k, clean(&val))))
+        .filter(|(id, _, _)| !is_hidden(hidden, id))
+        .filter_map(|(_, k, v)| v.map(|val| (k, clean(&val))))
         .filter(|(_, v)| !v.is_empty())
         .collect();
     (!rows.is_empty()).then_some(Section { title, rows })
@@ -524,6 +557,30 @@ fn drm_gpus() -> Option<String> {
     (!v.is_empty()).then(|| v.join(", "))
 }
 
+fn parse_ip(out: &str) -> Option<String> {
+    const SKIP: &[&str] = &["docker", "br-", "veth", "virbr"];
+    let v: Vec<String> = out
+        .lines()
+        .filter_map(|l| {
+            let mut it = l.split_whitespace();
+            let iface = it.nth(1)?;
+            if SKIP.iter().any(|p| iface.starts_with(p)) {
+                return None;
+            }
+            let addr = it.skip_while(|t| *t != "inet").nth(1)?;
+            Some(format!("{iface}: {addr}"))
+        })
+        .collect();
+    (!v.is_empty()).then(|| v.join(", "))
+}
+
+fn local_ip() -> Option<String> {
+    parse_ip(&run(
+        "ip",
+        &["-o", "-4", "addr", "show", "scope", "global"],
+    )?)
+}
+
 fn gpus() -> Option<String> {
     lspci_gpus().or_else(drm_gpus)
 }
@@ -552,19 +609,28 @@ fn battery() -> Option<String> {
         })
 }
 
-pub fn gather(sys: &System) -> Info {
-    let (pkg, de, gpu, theme) = thread::scope(|s| {
-        let (a, b, c, d) = (
-            s.spawn(packages),
-            s.spawn(desktop),
-            s.spawn(gpus),
-            s.spawn(appearance),
+pub fn gather(sys: &System, hidden: &[String]) -> Info {
+    let show = |m: &str| !is_hidden(hidden, m);
+    let (pkg, de, gpu, theme, ip) = thread::scope(|s| {
+        let (a, b, c, d, e) = (
+            s.spawn(|| show("packages").then(packages).flatten()),
+            s.spawn(|| show("de").then(desktop).flatten()),
+            s.spawn(|| show("gpu").then(gpus).flatten()),
+            s.spawn(|| {
+                if show("theme") || show("icons") || show("font") {
+                    appearance()
+                } else {
+                    Theme::default()
+                }
+            }),
+            s.spawn(|| show("ip").then(local_ip).flatten()),
         );
         (
             a.join().ok().flatten(),
             b.join().ok().flatten(),
             c.join().ok().flatten(),
             d.join().unwrap_or_default(),
+            e.join().ok().flatten(),
         )
     });
     let [theme, icons, fnt] = theme;
@@ -577,39 +643,49 @@ pub fn gather(sys: &System) -> Info {
     let sections = [
         section(
             "Sistema",
+            hidden,
             vec![
-                ("OS", Some(format!("{os} {}", env::consts::ARCH))),
+                ("os", "OS", Some(format!("{os} {}", env::consts::ARCH))),
                 (
+                    "host",
                     "Host",
                     host_model().or_else(|| read("/proc/device-tree/model")),
                 ),
-                ("Kernel", System::kernel_version()),
-                ("Uptime", Some(uptime(System::uptime()))),
-                ("Init", read("/proc/1/comm")),
-                ("Procesos", processes()),
+                ("kernel", "Kernel", System::kernel_version()),
+                ("uptime", "Uptime", Some(uptime(System::uptime()))),
+                ("init", "Init", read("/proc/1/comm")),
+                ("processes", "Procesos", processes()),
                 (
+                    "load",
                     "Carga",
                     Some(format!("{:.2} {:.2} {:.2}", la.one, la.five, la.fifteen)),
                 ),
-                ("Paquetes", pkg),
-                ("Shell", shell()),
-                ("Terminal", terminal()),
-                ("Idioma", locale()),
+                ("packages", "Paquetes", pkg),
+                ("shell", "Shell", shell()),
+                ("terminal", "Terminal", terminal()),
+                ("locale", "Idioma", locale()),
+                ("ip", "IP", ip),
             ],
         ),
         section(
             "Escritorio",
+            hidden,
             vec![
-                ("DE/WM", de),
-                ("Pantalla", displays()),
-                ("Tema", theme),
-                ("Iconos", icons),
-                ("Fuente", fnt),
+                ("de", "DE/WM", de),
+                ("display", "Pantalla", displays()),
+                ("theme", "Tema", theme),
+                ("icons", "Iconos", icons),
+                ("font", "Fuente", fnt),
             ],
         ),
         section(
             "Hardware",
-            vec![("CPU", cpu(sys)), ("GPU", gpu), ("Batería", battery())],
+            hidden,
+            vec![
+                ("cpu", "CPU", cpu(sys)),
+                ("gpu", "GPU", gpu),
+                ("battery", "Batería", battery()),
+            ],
         ),
     ];
     let user = var("USER")
@@ -646,6 +722,34 @@ mod tests {
     fn run_returns_none_for_failing_or_missing_commands() {
         assert!(run("false", &[]).is_none());
         assert!(run("rsi-comando-que-no-existe", &[]).is_none());
+    }
+
+    #[test]
+    fn parse_ip_lists_global_addresses_and_skips_container_bridges() {
+        let out = "2: enp1s0    inet 192.168.1.5/24 brd 192.168.1.255 scope global dynamic enp1s0\\       valid_lft 85000sec\n\
+                   3: docker0    inet 172.17.0.1/16 brd 172.17.255.255 scope global docker0\\       valid_lft forever\n";
+        assert_eq!(parse_ip(out).as_deref(), Some("enp1s0: 192.168.1.5/24"));
+        assert_eq!(parse_ip(""), None);
+    }
+
+    #[test]
+    fn hidden_modules_are_matched_exactly() {
+        let hidden = vec!["ip".to_string()];
+        assert!(is_hidden(&hidden, "ip"));
+        assert!(!is_hidden(&hidden, "cpu"));
+    }
+
+    #[test]
+    fn section_drops_hidden_rows_and_empty_sections() {
+        let hidden = vec!["ip".to_string()];
+        let rows = vec![("ip", "IP", Some("1.2.3.4".to_string()))];
+        assert!(section("Red", &hidden, rows).is_none());
+        let rows = vec![
+            ("ip", "IP", Some("1.2.3.4".to_string())),
+            ("os", "OS", Some("Linux".to_string())),
+        ];
+        let s = section("Sistema", &hidden, rows).unwrap();
+        assert_eq!(s.rows, vec![("OS", "Linux".to_string())]);
     }
 
     #[test]
