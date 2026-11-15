@@ -168,10 +168,14 @@ if [ -n "$MAN_DIR" ] && [ -f "$TMP_DIR/extract/$BIN_NAME.1" ]; then
     fi
 fi
 
-case ":${PATH:-}:" in
-*":$INSTALL_DIR:"*) ;;
-*) echo "Aviso: $INSTALL_DIR no está en tu PATH." ;;
-esac
-
 echo "¡Instalación exitosa!"
-echo "Ejecuta: $BIN_NAME"
+case ":${PATH:-}:" in
+*":$INSTALL_DIR:"*) echo "Ejecuta: $BIN_NAME" ;;
+*)
+    echo "Aviso: $INSTALL_DIR no está en tu PATH, por eso «$BIN_NAME» aún no se encuentra."
+    echo "  Ejecútalo ahora con:  $INSTALL_DIR/$BIN_NAME"
+    echo "  Para usar «$BIN_NAME» directamente, cierra y abre la terminal"
+    echo "  (Ubuntu añade ~/.local/bin al PATH al iniciar la sesión) o ejecuta:"
+    echo "    export PATH=\"$INSTALL_DIR:\$PATH\""
+    ;;
+esac

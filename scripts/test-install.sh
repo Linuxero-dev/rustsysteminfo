@@ -98,6 +98,9 @@ GH_MODE=fail ATT=1 STUB_MODE=ok install_sh ./att4
 check "procedencia=1: rechaza si la verificación falla" not test -e "$WORK/cwd/att4/rsi"
 STUB_MODE=ok ATT=quizas install_sh ./att5
 check "rechaza un valor raro de RSI_VERIFY_ATTESTATION" not test -e "$WORK/cwd/att5/rsi"
+STUB_MODE=ok HOME="$WORK/home" PATH="$WORK/stub:$PATH" RSI_VERIFY_ATTESTATION=0 \
+    sh "$ROOT/install.sh" ./hint >"$WORK/hint.out" 2>&1 || true
+check "explica cómo usar rsi si el destino no está en el PATH" grep -q 'export PATH' "$WORK/hint.out"
 check "rechaza una RSI_VERSION con caracteres raros" \
     not env RSI_VERSION='v1;rm -rf /' PATH="$WORK/stub:$PATH" sh "$ROOT/install.sh" ./x
 

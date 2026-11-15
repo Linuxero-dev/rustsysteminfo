@@ -2,6 +2,12 @@
 
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [0.4.2]
+### Corregido
+- El instalador explica cómo ejecutar `rsi` cuando el destino no está en el PATH (caso típico de Ubuntu justo tras instalar).
+### Cambiado
+- La ola del logo es más lenta y suave.
+
 ## [0.4.1]
 ### Corregido
 - Las líneas más anchas que la terminal ya no pierden los colores al recortarse.

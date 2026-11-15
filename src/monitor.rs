@@ -9,6 +9,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 use sysinfo::System;
 
+/// Velocidad de la ola del logo en radianes por segundo (más bajo = más lenta).
+const WAVE_SPEED: f64 = 3.0;
 const HISTORY: usize = 12;
 const FRAME: Duration = Duration::from_millis(50);
 const SAMPLE: Duration = Duration::from_millis(500);
@@ -242,7 +244,11 @@ pub fn run(
         let tick = animate && last_draw.elapsed() >= FRAME;
         if full || (!paused && (sampled || tick)) {
             let t = paused_at.unwrap_or_else(Instant::now).duration_since(start);
-            let phase = if animate { t.as_secs_f64() * 7.5 } else { 0.0 };
+            let phase = if animate {
+                t.as_secs_f64() * WAVE_SPEED
+            } else {
+                0.0
+            };
             let frame = render(mon, phase, cols, rows);
             if frame.len() != prev_len {
                 prev_len = frame.len();
