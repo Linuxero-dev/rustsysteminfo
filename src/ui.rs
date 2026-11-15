@@ -5,6 +5,7 @@ use std::sync::OnceLock;
 enum Mode {
     Off,
     Ansi16,
+    Ansi256,
     True,
 }
 
@@ -17,6 +18,8 @@ fn mode() -> Mode {
             Mode::Off
         } else if colorterm.contains("truecolor") || colorterm.contains("24bit") {
             Mode::True
+        } else if term.contains("256color") {
+            Mode::Ansi256
         } else if term.is_empty() {
             Mode::Off
         } else {
@@ -45,10 +48,17 @@ pub fn dim() -> &'static str {
     sgr("\x1b[2m")
 }
 
+/// Color más cercano del cubo 6x6x6 de la paleta de 256 colores (índices 16 a 231).
+fn rgb_to_256(r: u8, g: u8, b: u8) -> u8 {
+    let level = |v: u8| ((v as u16 * 5 + 127) / 255) as u8;
+    16 + 36 * level(r) + 6 * level(g) + level(b)
+}
+
 pub fn rgb(r: u8, g: u8, b: u8) -> String {
     match mode() {
         Mode::Off => String::new(),
         Mode::True => format!("\x1b[38;2;{r};{g};{b}m"),
+        Mode::Ansi256 => format!("\x1b[38;5;{}m", rgb_to_256(r, g, b)),
         Mode::Ansi16 => {
             let bright = if r.max(g).max(b) > 150 { 60 } else { 0 };
             let base = 30 + (r > 110) as u8 + 2 * (g > 110) as u8 + 4 * (b > 110) as u8;
@@ -163,6 +173,34 @@ pub fn clean(s: &str) -> String {
     out
 }
 
+/// Columnas que ocupa un carácter en la terminal: 0 (combinantes), 1 o 2 (CJK, emojis).
+fn char_width(c: char) -> usize {
+    match c as u32 {
+        0x0300..=0x036F
+        | 0x1AB0..=0x1AFF
+        | 0x1DC0..=0x1DFF
+        | 0x20D0..=0x20FF
+        | 0xFE00..=0xFE0F
+        | 0xFE20..=0xFE2F => 0,
+        0x1100..=0x115F
+        | 0x2E80..=0x303E
+        | 0x3041..=0x33FF
+        | 0x3400..=0x4DBF
+        | 0x4E00..=0x9FFF
+        | 0xA000..=0xA4CF
+        | 0xAC00..=0xD7A3
+        | 0xF900..=0xFAFF
+        | 0xFE30..=0xFE4F
+        | 0xFF00..=0xFF60
+        | 0xFFE0..=0xFFE6
+        | 0x1F300..=0x1F64F
+        | 0x1F680..=0x1F6FF
+        | 0x1F900..=0x1F9FF
+        | 0x20000..=0x3FFFD => 2,
+        _ => 1,
+    }
+}
+
 fn scan(s: &str, max: usize) -> (String, usize) {
     let (mut out, mut n) = (String::with_capacity(s.len()), 0);
     let mut it = s.chars().peekable();
@@ -170,11 +208,12 @@ fn scan(s: &str, max: usize) -> (String, usize) {
         if c == '\u{1b}' {
             skip_ansi_sequence(&mut it);
         } else if !c.is_control() {
-            if n == max {
+            let w = char_width(c);
+            if n + w > max {
                 break;
             }
             out.push(c);
-            n += 1;
+            n += w;
         }
     }
     (out, n)
@@ -195,11 +234,25 @@ pub fn fit_width(s: &str, max: usize) -> String {
 }
 
 pub fn trunc(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        s.chars().take(max.saturating_sub(1)).chain(['…']).collect()
+    if visible_len(s) <= max {
+        return s.to_string();
     }
+    let (mut out, mut n) = (String::new(), 0);
+    for c in s.chars() {
+        let w = char_width(c);
+        if n + w + 1 > max {
+            break;
+        }
+        out.push(c);
+        n += w;
+    }
+    out.push('…');
+    out
+}
+
+/// Rellena con espacios a la derecha hasta `width` columnas (cuenta columnas, no caracteres).
+pub fn pad(s: &str, width: usize) -> String {
+    format!("{s}{}", " ".repeat(width.saturating_sub(visible_len(s))))
 }
 
 pub fn palette() -> Vec<String> {
@@ -232,7 +285,7 @@ pub fn human(bytes: u64, prec: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{bar, clean, fit_width, human, spark, trunc, visible_len};
+    use super::{bar, clean, fit_width, human, pad, rgb_to_256, spark, trunc, visible_len};
 
     #[test]
     fn clean_removes_invisible_and_bidi_characters() {
@@ -287,6 +340,24 @@ mod tests {
         let out = fit_width("\x1b[31mrojo\x1b[0m", 10);
         assert!(out.contains("\x1b[31m"));
         assert_eq!(visible_len(&out), 4);
+    }
+
+    #[test]
+    fn wide_characters_count_as_two_columns() {
+        assert_eq!(visible_len("日本語"), 6);
+        assert_eq!(visible_len("a😀b"), 4);
+        assert_eq!(visible_len("e\u{301}"), 1);
+        assert_eq!(visible_len(&fit_width("日本語", 5)), 4);
+        assert_eq!(trunc("日本語日本語", 5), "日本…");
+        assert_eq!(pad("日本", 6), "日本  ");
+    }
+
+    #[test]
+    fn rgb_maps_to_the_256_color_cube() {
+        assert_eq!(rgb_to_256(0, 0, 0), 16);
+        assert_eq!(rgb_to_256(255, 255, 255), 231);
+        assert_eq!(rgb_to_256(255, 0, 0), 196);
+        assert_eq!(rgb_to_256(0, 255, 0), 46);
     }
 
     #[test]

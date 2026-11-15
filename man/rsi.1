@@ -24,6 +24,9 @@ Muestra el logo estatico.
 .BI \-\-logo " NOMBRE"
 Fuerza un logo en lugar del de la distribucion detectada.
 .TP
+.B \-\-json
+Imprime los datos en JSON y finaliza.
+.TP
 .B \-\-no\-logo
 No muestra el logo.
 .TP
@@ -39,8 +42,23 @@ o
 .BI \-\-hide " MOD1,MOD2"
 Oculta varios modulos a la vez.
 .TP
+.BI \-\-show " MOD1,MOD2"
+Muestra modulos que el fichero de configuracion oculta.
+.TP
 .B \-\-list\-modules
 Lista los modulos que se pueden ocultar.
+.TP
+.BI \-\-config " RUTA"
+Usa otro fichero de configuracion.
+.TP
+.B \-\-no\-config
+Ignora el fichero de configuracion.
+.TP
+.B \-\-gen\-config
+Imprime una configuracion de ejemplo.
+.TP
+.BI \-\-completions " SHELL"
+Imprime el completado de comandos para bash, zsh o fish.
 .SH CONTROLES
 .TP
 .B Espacio
@@ -48,10 +66,19 @@ Pausa/reanuda.
 .TP
 .BR Enter ", " Esc ", " q
 Sale.
+.SH FICHEROS
+.TP
+.I ~/.config/rsi/config
+Configuracion opcional, con lineas
+.IR clave " = " valor .
+Claves: hide, logo, no_logo y animate. La linea de comandos tiene prioridad.
 .SH ENTORNO
 .TP
 .B NO_COLOR
 Si esta definida, desactiva los colores.
+.TP
+.B RSI_VERIFY_ATTESTATION
+Solo para install.sh: auto (por defecto), 1 para exigir la verificacion de procedencia, 0 para omitirla.
 .SH AUTORES
 Linuxero-dev.
 .SH LICENCIA

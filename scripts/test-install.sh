@@ -44,6 +44,13 @@ esac
 STUB
 chmod +x "$WORK/stub/curl"
 
+# Simula gh: "gh attestation verify" tiene éxito o falla según GH_MODE (ok | fail).
+cat >"$WORK/stub/gh" <<'STUB'
+#!/bin/sh
+[ "${GH_MODE:-ok}" = "ok" ]
+STUB
+chmod +x "$WORK/stub/gh"
+
 fails=0
 check() {
     local desc="$1"
@@ -55,7 +62,7 @@ check() {
         fails=$((fails + 1))
     fi
 }
-install_sh() { HOME="$WORK/home" PATH="$WORK/stub:$PATH" sh "$ROOT/install.sh" "$@" >/dev/null 2>&1; }
+install_sh() { HOME="$WORK/home" PATH="$WORK/stub:$PATH" RSI_VERIFY_ATTESTATION="${ATT:-0}" sh "$ROOT/install.sh" "$@" >/dev/null 2>&1; }
 not() { ! "$@"; }
 
 echo "install.sh"
@@ -81,6 +88,16 @@ check "rechaza una suma SHA256 incorrecta" not test -e "$WORK/cwd/otro/rsi"
 STUB_MODE=no-binary install_sh ./otro2
 check "rechaza un paquete sin el binario" not test -e "$WORK/cwd/otro2/rsi"
 check "rechaza opciones desconocidas" not sh "$ROOT/install.sh" --nope
+GH_MODE=ok ATT=auto STUB_MODE=ok install_sh ./att1
+check "procedencia auto: instala si gh verifica" test -x "$WORK/cwd/att1/rsi"
+GH_MODE=fail ATT=auto STUB_MODE=ok install_sh ./att2
+check "procedencia auto: instala con aviso si gh no puede verificar" test -x "$WORK/cwd/att2/rsi"
+GH_MODE=ok ATT=1 STUB_MODE=ok install_sh ./att3
+check "procedencia=1: instala si gh verifica" test -x "$WORK/cwd/att3/rsi"
+GH_MODE=fail ATT=1 STUB_MODE=ok install_sh ./att4
+check "procedencia=1: rechaza si la verificación falla" not test -e "$WORK/cwd/att4/rsi"
+STUB_MODE=ok ATT=quizas install_sh ./att5
+check "rechaza un valor raro de RSI_VERIFY_ATTESTATION" not test -e "$WORK/cwd/att5/rsi"
 check "rechaza una RSI_VERSION con caracteres raros" \
     not env RSI_VERSION='v1;rm -rf /' PATH="$WORK/stub:$PATH" sh "$ROOT/install.sh" ./x
 

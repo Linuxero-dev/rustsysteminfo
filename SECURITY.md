@@ -15,5 +15,8 @@ Cada release publica, junto a cada `.tar.gz`, su suma `.sha256` y una
 gh attestation verify rsi-x86_64-unknown-linux-musl.tar.gz --repo Linuxero-dev/rustsysteminfo
 ```
 
-El instalador comprueba el SHA256 siempre, y la procedencia si se ejecuta con
-`RSI_VERIFY_ATTESTATION=1` (requiere la CLI `gh`).
+El instalador comprueba el SHA256 siempre. La procedencia se verifica además
+con la CLI `gh` cuando está instalada (`RSI_VERIFY_ATTESTATION=auto`, el valor
+por defecto): si no se puede verificar, avisa y continúa, porque el SHA256 ya
+coincide. Con `RSI_VERIFY_ATTESTATION=1` la verificación es obligatoria y la
+instalación falla si no se completa; con `0` se omite.

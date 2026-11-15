@@ -1,4 +1,5 @@
-use crate::ui::clean;
+use crate::ui::{clean, human};
+use std::collections::HashSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -34,11 +35,13 @@ pub const MODULES: &[&str] = &[
     "locale",
     "ip",
     "de",
+    "wm",
     "display",
     "theme",
     "icons",
     "font",
     "cpu",
+    "temp",
     "gpu",
     "battery",
     "disks",
@@ -51,7 +54,8 @@ pub fn is_hidden(hidden: &[String], id: &str) -> bool {
 
 pub struct Section {
     pub title: &'static str,
-    pub rows: Vec<(&'static str, String)>,
+    /// (identificador de módulo, etiqueta, valor)
+    pub rows: Vec<(&'static str, &'static str, String)>,
 }
 
 pub struct Info {
@@ -157,7 +161,7 @@ fn ini(path: &str, section: &str, key: &str) -> Option<String> {
     None
 }
 
-fn cfg(rel: &str) -> String {
+pub fn cfg(rel: &str) -> String {
     let base = var("XDG_CONFIG_HOME")
         .filter(|p| Path::new(p).is_absolute())
         .or_else(|| var("HOME").map(|h| format!("{h}/.config")));
@@ -167,11 +171,11 @@ fn cfg(rel: &str) -> String {
 type RawRow = (&'static str, &'static str, Option<String>);
 
 fn section(title: &'static str, hidden: &[String], rows: Vec<RawRow>) -> Option<Section> {
-    let rows: Vec<(&'static str, String)> = rows
+    let rows: Vec<(&'static str, &'static str, String)> = rows
         .into_iter()
         .filter(|(id, _, _)| !is_hidden(hidden, id))
-        .filter_map(|(_, k, v)| v.map(|val| (k, clean(&val))))
-        .filter(|(_, v)| !v.is_empty())
+        .filter_map(|(id, k, v)| v.map(|val| (id, k, clean(&val))))
+        .filter(|(_, _, v)| !v.is_empty())
         .collect();
     (!rows.is_empty()).then_some(Section { title, rows })
 }
@@ -321,9 +325,30 @@ fn packages() -> Option<String> {
     (!v.is_empty()).then(|| v.join(", "))
 }
 
+/// Primer número de versión de una línea como `GNU bash, version 5.2.26(1)-release`.
+fn parse_version(line: &str) -> Option<String> {
+    let token = line
+        .split_whitespace()
+        .find(|t| t.starts_with(|c: char| c.is_ascii_digit()))?;
+    let v: String = token
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    let v = v.trim_end_matches('.');
+    (!v.is_empty()).then(|| v.to_string())
+}
+
 fn shell() -> Option<String> {
     let s = var("SHELL")?;
-    Some(Path::new(&s).file_name()?.to_string_lossy().into_owned())
+    let name = Path::new(&s).file_name()?.to_string_lossy().into_owned();
+    let version = matches!(name.as_str(), "bash" | "zsh" | "fish" | "nu")
+        .then(|| run(&name, &["--version"]))
+        .flatten()
+        .and_then(|o| o.lines().next().and_then(parse_version));
+    Some(match version {
+        Some(v) => format!("{name} {v}"),
+        None => name,
+    })
 }
 
 fn terminal() -> Option<String> {
@@ -387,6 +412,88 @@ fn desktop() -> Option<String> {
     Some(format!("{label}{session}"))
 }
 
+/// Gestores de ventanas y compositores conocidos: (nombre del proceso, nombre mostrado).
+const WMS: &[(&str, &str)] = &[
+    ("kwin_wayland", "KWin"),
+    ("kwin_x11", "KWin"),
+    ("gnome-shell", "Mutter"),
+    ("mutter", "Mutter"),
+    ("Hyprland", "Hyprland"),
+    ("hyprland", "Hyprland"),
+    ("sway", "Sway"),
+    ("niri", "niri"),
+    ("river", "river"),
+    ("labwc", "labwc"),
+    ("wayfire", "Wayfire"),
+    ("cosmic-comp", "COSMIC Comp"),
+    ("weston", "Weston"),
+    ("xfwm4", "Xfwm4"),
+    ("marco", "Marco"),
+    ("muffin", "Muffin"),
+    ("budgie-wm", "Budgie WM"),
+    ("openbox", "Openbox"),
+    ("i3", "i3"),
+    ("bspwm", "bspwm"),
+    ("awesome", "awesome"),
+    ("qtile", "Qtile"),
+    ("herbstluftwm", "herbstluftwm"),
+    ("icewm", "IceWM"),
+    ("fluxbox", "Fluxbox"),
+    ("enlightenment", "Enlightenment"),
+    ("dwm", "dwm"),
+];
+
+fn find_wm(comms: &HashSet<String>) -> Option<&'static str> {
+    WMS.iter()
+        .find(|(comm, _)| comms.contains(*comm))
+        .map(|(_, name)| *name)
+}
+
+fn wm() -> Option<String> {
+    let comms: HashSet<String> = fs::read_dir("/proc")
+        .ok()?
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .bytes()
+                .all(|b| b.is_ascii_digit())
+        })
+        .filter_map(|e| read(e.path().join("comm")))
+        .collect();
+    find_wm(&comms).map(String::from)
+}
+
+/// Frecuencia de refresco (Hz) del primer descriptor de temporización del EDID
+/// cuya resolución activa coincide con `mode` (p. ej. `1920x1080`).
+fn edid_refresh(edid: &[u8], mode: &str) -> Option<u32> {
+    let (w, h) = mode.split_once('x')?;
+    let w: u32 = w.parse().ok()?;
+    let h: u32 = h
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>()
+        .parse()
+        .ok()?;
+    if edid.len() < 128 {
+        return None;
+    }
+    [54usize, 72, 90, 108].iter().find_map(|&o| {
+        let d = &edid[o..o + 18];
+        let clock = u64::from(u16::from_le_bytes([d[0], d[1]])) * 10_000;
+        let ha = u32::from(d[2]) | (u32::from(d[4] & 0xF0) << 4);
+        let hb = u32::from(d[3]) | (u32::from(d[4] & 0x0F) << 8);
+        let va = u32::from(d[5]) | (u32::from(d[7] & 0xF0) << 4);
+        let vb = u32::from(d[6]) | (u32::from(d[7] & 0x0F) << 8);
+        let total = u64::from(ha + hb) * u64::from(va + vb);
+        if clock == 0 || total == 0 || ha != w || va != h {
+            return None;
+        }
+        let hz = ((clock + total / 2) / total) as u32;
+        (20..=500).contains(&hz).then_some(hz)
+    })
+}
+
 fn displays() -> Option<String> {
     let mut v: Vec<String> = fs::read_dir("/sys/class/drm")
         .ok()?
@@ -399,7 +506,13 @@ fn displays() -> Option<String> {
                 return None;
             }
             let mode = read(p.join("modes"))?.lines().next()?.to_string();
-            Some(format!("{port}: {mode}"))
+            let hz = fs::read(p.join("edid"))
+                .ok()
+                .and_then(|edid| edid_refresh(&edid, &mode));
+            Some(match hz {
+                Some(hz) => format!("{port}: {mode} @ {hz} Hz"),
+                None => format!("{port}: {mode}"),
+            })
         })
         .collect();
     v.sort();
@@ -501,8 +614,8 @@ fn cpu(sys: &System) -> Option<String> {
     let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
     let threads = sys.cpus().len();
     let topo = match sys.physical_core_count() {
-        Some(p) if p != threads => format!("{p}C/{threads}T"),
-        _ => format!("{threads}T"),
+        Some(p) => format!("{p}C/{threads}T"),
+        None => format!("{threads}T"),
     };
     let mhz = read("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")
         .and_then(|s| s.parse::<u64>().ok())
@@ -514,7 +627,7 @@ fn cpu(sys: &System) -> Option<String> {
     })
 }
 
-fn lspci_gpus() -> Option<String> {
+fn lspci_gpus() -> Option<Vec<String>> {
     let v: Vec<String> = run("lspci", &["-mm"])?
         .lines()
         .filter_map(|l| {
@@ -533,10 +646,10 @@ fn lspci_gpus() -> Option<String> {
             Some(format!("{vendor} {dev}"))
         })
         .collect();
-    (!v.is_empty()).then(|| v.join(", "))
+    (!v.is_empty()).then_some(v)
 }
 
-fn drm_gpus() -> Option<String> {
+fn drm_gpus() -> Option<Vec<String>> {
     let v: Vec<String> = fs::read_dir("/sys/class/drm")
         .ok()?
         .flatten()
@@ -554,7 +667,45 @@ fn drm_gpus() -> Option<String> {
             Some(vendor.to_string())
         })
         .collect();
-    (!v.is_empty()).then(|| v.join(", "))
+    (!v.is_empty()).then_some(v)
+}
+
+/// Temperatura de la CPU leída de `hwmon` (`root` es normalmente `/sys/class/hwmon`).
+fn cpu_temp_in(root: &Path) -> Option<String> {
+    const CHIPS: &[&str] = &["k10temp", "coretemp", "zenpower", "cpu_thermal", "acpitz"];
+    const LABELS: &[&str] = &["Tctl", "Tdie", "Package id 0", "CPU"];
+    let mut best: Option<(usize, i64)> = None;
+    for e in fs::read_dir(root).ok()?.flatten() {
+        let p = e.path();
+        let Some(rank) = read(p.join("name")).and_then(|n| CHIPS.iter().position(|c| *c == n))
+        else {
+            continue;
+        };
+        let labelled = (1..=8).find_map(|i| {
+            let label = read(p.join(format!("temp{i}_label")))?;
+            if LABELS.contains(&label.as_str()) {
+                read(p.join(format!("temp{i}_input")))
+            } else {
+                None
+            }
+        });
+        let raw = labelled.or_else(|| read(p.join("temp1_input")));
+        let Some(milli) = raw.and_then(|s| s.parse::<i64>().ok()) else {
+            continue;
+        };
+        if !(1..=150_000).contains(&milli) {
+            continue;
+        }
+        match best {
+            Some((r, _)) if r <= rank => {}
+            _ => best = Some((rank, milli)),
+        }
+    }
+    best.map(|(_, milli)| format!("{} °C", (milli as f64 / 1000.0).round() as i64))
+}
+
+fn cpu_temp() -> Option<String> {
+    cpu_temp_in(Path::new("/sys/class/hwmon"))
 }
 
 fn parse_ip(out: &str) -> Option<String> {
@@ -581,8 +732,48 @@ fn local_ip() -> Option<String> {
     )?)
 }
 
+fn nvidia_vram() -> Option<u64> {
+    let out = run(
+        "nvidia-smi",
+        &["--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+    )?;
+    let mib: u64 = out.lines().next()?.trim().parse().ok()?;
+    Some(mib * 1024 * 1024)
+}
+
+/// VRAM total: AMD la expone en sysfs y NVIDIA vía `nvidia-smi`.
+fn gpu_vram(name: &str) -> Option<u64> {
+    let amd = fs::read_dir("/sys/class/drm")
+        .ok()
+        .and_then(|d| {
+            d.flatten()
+                .filter(|e| {
+                    let n = e.file_name().to_string_lossy().into_owned();
+                    n.starts_with("card") && !n.contains('-')
+                })
+                .find_map(|e| {
+                    read(e.path().join("device/mem_info_vram_total"))?
+                        .parse::<u64>()
+                        .ok()
+                })
+        })
+        .filter(|b| *b > 0);
+    amd.or_else(|| name.contains("NVIDIA").then(nvidia_vram).flatten())
+}
+
 fn gpus() -> Option<String> {
-    lspci_gpus().or_else(drm_gpus)
+    let list = lspci_gpus().or_else(drm_gpus)?;
+    let names = list.join(", ");
+    // Con varias GPU no se sabe a cuál pertenece cada cifra: solo se muestra con una.
+    let vram = if list.len() == 1 {
+        gpu_vram(&list[0])
+    } else {
+        None
+    };
+    Some(match vram {
+        Some(b) => format!("{names} ({})", human(b, 1)),
+        None => names,
+    })
 }
 
 fn battery() -> Option<String> {
@@ -611,8 +802,8 @@ fn battery() -> Option<String> {
 
 pub fn gather(sys: &System, hidden: &[String]) -> Info {
     let show = |m: &str| !is_hidden(hidden, m);
-    let (pkg, de, gpu, theme, ip) = thread::scope(|s| {
-        let (a, b, c, d, e) = (
+    let (pkg, de, gpu, theme, ip, wm) = thread::scope(|s| {
+        let (a, b, c, d, e, f) = (
             s.spawn(|| show("packages").then(packages).flatten()),
             s.spawn(|| show("de").then(desktop).flatten()),
             s.spawn(|| show("gpu").then(gpus).flatten()),
@@ -624,6 +815,7 @@ pub fn gather(sys: &System, hidden: &[String]) -> Info {
                 }
             }),
             s.spawn(|| show("ip").then(local_ip).flatten()),
+            s.spawn(|| show("wm").then(wm).flatten()),
         );
         (
             a.join().ok().flatten(),
@@ -631,6 +823,7 @@ pub fn gather(sys: &System, hidden: &[String]) -> Info {
             c.join().ok().flatten(),
             d.join().unwrap_or_default(),
             e.join().ok().flatten(),
+            f.join().ok().flatten(),
         )
     });
     let [theme, icons, fnt] = theme;
@@ -671,7 +864,8 @@ pub fn gather(sys: &System, hidden: &[String]) -> Info {
             "Escritorio",
             hidden,
             vec![
-                ("de", "DE/WM", de),
+                ("de", "DE", de),
+                ("wm", "WM", wm),
                 ("display", "Pantalla", displays()),
                 ("theme", "Tema", theme),
                 ("icons", "Iconos", icons),
@@ -683,6 +877,7 @@ pub fn gather(sys: &System, hidden: &[String]) -> Info {
             hidden,
             vec![
                 ("cpu", "CPU", cpu(sys)),
+                ("temp", "Temp", cpu_temp()),
                 ("gpu", "GPU", gpu),
                 ("battery", "Batería", battery()),
             ],
@@ -749,7 +944,63 @@ mod tests {
             ("os", "OS", Some("Linux".to_string())),
         ];
         let s = section("Sistema", &hidden, rows).unwrap();
-        assert_eq!(s.rows, vec![("OS", "Linux".to_string())]);
+        assert_eq!(s.rows, vec![("os", "OS", "Linux".to_string())]);
+    }
+
+    #[test]
+    fn parse_version_finds_the_first_version_number() {
+        let v = |l| parse_version(l).unwrap();
+        assert_eq!(
+            v("GNU bash, version 5.2.26(1)-release (x86_64-redhat-linux-gnu)"),
+            "5.2.26"
+        );
+        assert_eq!(v("zsh 5.9 (x86_64-redhat-linux-gnu)"), "5.9");
+        assert_eq!(v("fish, version 3.7.1"), "3.7.1");
+        assert_eq!(parse_version("sin versión"), None);
+    }
+
+    #[test]
+    fn find_wm_uses_the_priority_order_of_the_table() {
+        let set = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<HashSet<_>>();
+        assert_eq!(find_wm(&set(&["bash", "kwin_wayland", "i3"])), Some("KWin"));
+        assert_eq!(find_wm(&set(&["Hyprland"])), Some("Hyprland"));
+        assert_eq!(find_wm(&set(&["bash", "vim"])), None);
+    }
+
+    fn dtd_1080p60() -> Vec<u8> {
+        let mut edid = vec![0u8; 128];
+        edid[54..72].copy_from_slice(&[
+            0x02, 0x3A, 0x80, 0x18, 0x71, 0x38, 0x2D, 0x40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ]);
+        edid
+    }
+
+    #[test]
+    fn edid_refresh_reads_the_matching_timing_descriptor() {
+        let edid = dtd_1080p60();
+        assert_eq!(edid_refresh(&edid, "1920x1080"), Some(60));
+        assert_eq!(edid_refresh(&edid, "1920x1080i"), Some(60));
+        assert_eq!(edid_refresh(&edid, "1600x900"), None);
+        assert_eq!(edid_refresh(&edid[..64], "1920x1080"), None);
+        assert_eq!(edid_refresh(&edid, "raro"), None);
+    }
+
+    #[test]
+    fn cpu_temp_picks_the_cpu_sensor_and_rounds() {
+        let root = env::temp_dir().join(format!("rsi-hwmon-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let put = |dir: &str, file: &str, txt: &str| {
+            fs::create_dir_all(root.join(dir)).unwrap();
+            fs::write(root.join(dir).join(file), txt).unwrap();
+        };
+        put("hwmon0", "name", "nvme\n");
+        put("hwmon0", "temp1_input", "30000\n");
+        put("hwmon1", "name", "k10temp\n");
+        put("hwmon1", "temp1_label", "Tctl\n");
+        put("hwmon1", "temp1_input", "54500\n");
+        assert_eq!(cpu_temp_in(&root).as_deref(), Some("55 °C"));
+        assert_eq!(cpu_temp_in(&root.join("no-existe")), None);
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

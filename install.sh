@@ -15,7 +15,10 @@ DIRECTORIO   destino del binario (por defecto: \$HOME/.local/bin)
 
 Variables de entorno:
   RSI_VERSION              instala una versión concreta (p. ej. v0.2.2) en vez de la última
-  RSI_VERIFY_ATTESTATION=1 verifica además la procedencia con "gh attestation verify"
+  RSI_VERIFY_ATTESTATION   verificación de procedencia con "gh attestation verify":
+                             auto (por defecto) la comprueba si gh está instalado y avisa si falla
+                             1  la exige: la instalación falla si no se puede verificar
+                             0  la omite
 EOF
 }
 
@@ -71,6 +74,12 @@ if [ "$UNINSTALL" -eq 1 ]; then
     exit 0
 fi
 
+ATTEST="${RSI_VERIFY_ATTESTATION:-auto}"
+case "$ATTEST" in
+0 | 1 | auto) ;;
+*) die "RSI_VERIFY_ATTESTATION debe ser auto, 0 o 1" ;;
+esac
+
 command -v curl >/dev/null 2>&1 || die "se necesita curl"
 command -v tar >/dev/null 2>&1 || die "se necesita tar"
 
@@ -117,12 +126,26 @@ fetch "$BASE_URL/$CHECKSUM_NAME" "$TMP_DIR/$CHECKSUM_NAME" || die "no se pudo de
 echo "Verificando integridad (SHA256)..."
 (cd "$TMP_DIR" && sha_check "$CHECKSUM_NAME") || die "la suma de comprobación no coincide."
 
-if [ "${RSI_VERIFY_ATTESTATION:-0}" = "1" ]; then
+verify_attestation() {
+    gh attestation verify "$TMP_DIR/$ASSET_NAME" --repo "$REPO" >/dev/null
+}
+
+case "$ATTEST" in
+1)
     command -v gh >/dev/null 2>&1 || die "RSI_VERIFY_ATTESTATION=1 requiere la CLI de GitHub (gh)"
     echo "Verificando procedencia (attestation)..."
-    gh attestation verify "$TMP_DIR/$ASSET_NAME" --repo "$REPO" >/dev/null ||
-        die "la verificación de procedencia ha fallado."
-fi
+    verify_attestation || die "la verificación de procedencia ha fallado."
+    ;;
+auto)
+    if command -v gh >/dev/null 2>&1; then
+        echo "Verificando procedencia (attestation)..."
+        if ! verify_attestation 2>/dev/null; then
+            echo "Aviso: no se pudo verificar la procedencia (¿gh sin autenticar?); el SHA256 sí coincide." >&2
+            echo "       Usa RSI_VERIFY_ATTESTATION=1 para exigirla." >&2
+        fi
+    fi
+    ;;
+esac
 
 # Se extrae en un directorio temporal y solo se instalan los ficheros esperados.
 mkdir "$TMP_DIR/extract"

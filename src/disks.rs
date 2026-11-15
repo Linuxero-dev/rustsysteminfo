@@ -1,4 +1,4 @@
-use crate::ui::{bar, clean, dim, human, pct_color, reset, trunc};
+use crate::ui::{bar, clean, dim, human, pad, pct_color, reset, trunc, visible_len};
 use std::collections::HashSet;
 use sysinfo::Disks;
 
@@ -38,10 +38,10 @@ const SKIP_MOUNT: &[&str] = &[
 ];
 
 pub struct DiskInfo {
-    mount: String,
-    fs: String,
-    used: u64,
-    total: u64,
+    pub mount: String,
+    pub fs: String,
+    pub used: u64,
+    pub total: u64,
 }
 
 fn under(mount: &str, prefix: &str) -> bool {
@@ -75,7 +75,7 @@ pub fn collect() -> Vec<DiskInfo> {
 }
 
 fn label(mount: &str) -> String {
-    if mount.chars().count() <= 11 {
+    if visible_len(mount) <= 11 {
         return mount.to_string();
     }
     trunc(
@@ -98,9 +98,9 @@ pub fn lines(disks: &[DiskInfo]) -> Vec<String> {
         .map(|k| {
             let f = k.used as f64 / k.total as f64;
             format!(
-                "{:<12}{d}{:<6}{r} {} {}{:>3.0}%{r} {} / {}",
-                label(&k.mount),
-                trunc(&k.fs, 5),
+                "{}{d}{}{r} {} {}{:>3.0}%{r} {} / {}",
+                pad(&label(&k.mount), 12),
+                pad(&trunc(&k.fs, 5), 6),
                 bar(f, 14),
                 pct_color(f * 100.0),
                 f * 100.0,

@@ -1,16 +1,19 @@
 mod anim;
+mod cli;
+mod completions;
 mod disks;
 mod info;
+mod json;
 mod logo;
 mod monitor;
 mod ui;
 
+use cli::Action;
 use info::Info;
 use monitor::Row;
 use std::io::{self, IsTerminal, Write};
-use std::sync::mpsc;
 use std::time::Duration;
-use std::{env, iter, process::ExitCode, thread};
+use std::{env, iter, process::ExitCode, sync::mpsc, thread};
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 use ui::{bold, dim, fit_width, reset, visible_len};
 
@@ -18,115 +21,8 @@ const GAP: usize = 4;
 const DISK_TIMEOUT: Duration = Duration::from_secs(3);
 const MIN_COLS: usize = 40;
 const MIN_ROWS: usize = 12;
-
-const HELP: &str = "rsi — información del sistema y monitor en vivo
-USO: rsi [OPCIONES]
-
-General:
-  -h, --help          muestra esta ayuda
-  -V, --version       muestra la versión
-      --once          imprime una vez y sale (sin monitor en vivo)
-      --no-anim       logo estático
-
-Logo:
-      --logo NOMBRE   fuerza un logo (ver --list-logos)
-      --no-logo       no muestra el logo
-      --list-logos    lista los logos disponibles
-
-Módulos:
-      --no-MÓDULO     oculta un módulo, p. ej. --no-ip o --no-gpu
-      --hide A,B      oculta varios módulos a la vez
-      --list-modules  lista los módulos disponibles
-
-Por defecto permanece abierto (Enter, Esc o q para salir).
-Respeta la variable NO_COLOR.";
-
-#[derive(Debug, PartialEq)]
-struct Cli {
-    once: bool,
-    animate: bool,
-    no_logo: bool,
-    logo: Option<String>,
-    hidden: Vec<String>,
-}
-
-#[derive(Debug, PartialEq)]
-enum Action {
-    Run(Cli),
-    Help,
-    Version,
-    ListLogos,
-    ListModules,
-}
-
-fn hide(hidden: &mut Vec<String>, module: &str) -> Result<(), String> {
-    let m = module.to_ascii_lowercase();
-    if !info::MODULES.contains(&m.as_str()) {
-        return Err(format!(
-            "Módulo desconocido: {} (ver --list-modules)",
-            ui::clean(module)
-        ));
-    }
-    if !hidden.contains(&m) {
-        hidden.push(m);
-    }
-    Ok(())
-}
-
-fn parse_args(args: Vec<String>) -> Result<Action, String> {
-    let mut cli = Cli {
-        once: false,
-        animate: true,
-        no_logo: false,
-        logo: None,
-        hidden: Vec::new(),
-    };
-    let mut it = args.into_iter();
-    while let Some(arg) = it.next() {
-        let (name, inline) = match arg.split_once('=') {
-            Some((n, v)) if n.starts_with("--") => (n, Some(v.to_string())),
-            _ => (arg.as_str(), None),
-        };
-        let takes_value = matches!(name, "--logo" | "--hide");
-        if inline.is_some() && !takes_value {
-            return Err(format!("Opción desconocida: {}", ui::clean(&arg)));
-        }
-        match name {
-            "-h" | "--help" => return Ok(Action::Help),
-            "-V" | "--version" => return Ok(Action::Version),
-            "--list-logos" => return Ok(Action::ListLogos),
-            "--list-modules" => return Ok(Action::ListModules),
-            "--once" | "--no-live" => cli.once = true,
-            "--no-anim" | "--static" => cli.animate = false,
-            "--no-logo" => cli.no_logo = true,
-            "--logo" => {
-                let v = inline
-                    .or_else(|| it.next())
-                    .ok_or("--logo necesita un nombre (ver --list-logos)")?;
-                if logo::by_name(&v).is_none() {
-                    return Err(format!(
-                        "Logo desconocido: {} (ver --list-logos)",
-                        ui::clean(&v)
-                    ));
-                }
-                cli.logo = Some(v);
-            }
-            "--hide" => {
-                let v = inline
-                    .or_else(|| it.next())
-                    .ok_or("--hide necesita una lista de módulos (ver --list-modules)")?;
-                for m in v.split(',').filter(|m| !m.is_empty()) {
-                    hide(&mut cli.hidden, m)?;
-                }
-            }
-            o => match o.strip_prefix("--no-") {
-                Some(m) => hide(&mut cli.hidden, m)?,
-                None => return Err(format!("Opción desconocida: {}", ui::clean(o))),
-            },
-        }
-    }
-    Ok(Action::Run(cli))
-}
+/// Ancho de la línea decorativa que acompaña a los títulos de sección.
+const HEAD_RULE: usize = 26;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Layout {
@@ -163,12 +59,17 @@ fn too_small_rows(cols: usize, rows: usize) -> Vec<Row> {
 
 fn right_groups(info: &Info, accent: &str, title: &str, disks: Vec<String>) -> Vec<Vec<String>> {
     let (b, d, r) = (bold(), dim(), reset());
-    let head = |t: &str| format!("{title}{b}{t}{r}");
+    let head = |t: &str| {
+        format!(
+            "{title}{b}{t}{r} {d}{}{r}",
+            "─".repeat(HEAD_RULE.saturating_sub(visible_len(t) + 1))
+        )
+    };
     let mut groups = vec![vec![
         format!("{accent}{b}{}{r}@{accent}{b}{}{r}", info.user, info.host),
         format!(
             "{d}{}{r}",
-            "─".repeat(info.user.chars().count() + info.host.chars().count() + 1)
+            "─".repeat(visible_len(&info.user) + visible_len(&info.host) + 1)
         ),
     ]];
     for s in &info.sections {
@@ -176,7 +77,7 @@ fn right_groups(info: &Info, accent: &str, title: &str, disks: Vec<String>) -> V
         v.extend(
             s.rows
                 .iter()
-                .map(|(k, val)| format!("{accent}{b}{k:<9}{r} {val}")),
+                .map(|(_, k, val)| format!("{accent}{b}{k:<9}{r} {val}")),
         );
         groups.push(v);
     }
@@ -241,6 +142,11 @@ fn compose(left: &[String], lw: usize, right: &[String], cols: usize) -> Vec<Row
         .collect()
 }
 
+fn print_text(text: &str) {
+    let mut o = io::stdout().lock();
+    let _ = o.write_all(text.as_bytes());
+}
+
 fn print_lines(lines: &[&str]) {
     let mut o = io::stdout().lock();
     for l in lines {
@@ -256,15 +162,23 @@ fn main() -> ExitCode {
         match a.into_string() {
             Ok(s) => args.push(s),
             Err(_) => {
-                eprintln!("Opción no válida para la terminal\n\n{HELP}");
+                eprintln!("Opción no válida para la terminal\n\n{}", cli::HELP);
                 return ExitCode::from(2);
             }
         }
     }
-    let cli = match parse_args(args) {
+    let source = cli::config_source(&args);
+    let (base, warnings) = match cli::load_config(&source, &info::cfg("rsi/config")) {
+        Ok(loaded) => loaded,
+        Err(msg) => {
+            eprintln!("{msg}");
+            return ExitCode::from(2);
+        }
+    };
+    let cli = match cli::parse_args(args, base) {
         Ok(Action::Run(cli)) => cli,
         Ok(Action::Help) => {
-            print_lines(&[HELP]);
+            print_lines(&[cli::HELP]);
             return ExitCode::SUCCESS;
         }
         Ok(Action::Version) => {
@@ -279,11 +193,22 @@ fn main() -> ExitCode {
             print_lines(info::MODULES);
             return ExitCode::SUCCESS;
         }
+        Ok(Action::GenConfig) => {
+            print_text(cli::SAMPLE_CONFIG);
+            return ExitCode::SUCCESS;
+        }
+        Ok(Action::Completions(shell)) => {
+            print_text(&completions::script(&shell).unwrap_or_default());
+            return ExitCode::SUCCESS;
+        }
         Err(msg) => {
-            eprintln!("{msg}\n\n{HELP}");
+            eprintln!("{msg}\n\n{}", cli::HELP);
             return ExitCode::from(2);
         }
     };
+    for w in &warnings {
+        eprintln!("rsi: configuración: {w}");
+    }
 
     let sys = System::new_with_specifics(
         RefreshKind::new()
@@ -300,12 +225,26 @@ fn main() -> ExitCode {
     });
 
     let info = info::gather(&sys, &cli.hidden);
-    let disk_lines = match disk_rx {
+    // None = módulo oculto; Some(None) = tiempo agotado; Some(Some(lista)) = datos.
+    let disk_list = disk_rx.map(|rx| rx.recv_timeout(DISK_TIMEOUT).ok());
+    let mut mon = monitor::Monitor::new(sys);
+
+    if cli.json {
+        let snap = mon.measure();
+        let shown = disk_list.as_ref().and_then(|d| d.as_deref());
+        print_text(&json::render(
+            env!("CARGO_PKG_VERSION"),
+            &info,
+            shown,
+            &snap,
+        ));
+        return ExitCode::SUCCESS;
+    }
+
+    let disk_lines = match &disk_list {
         None => Vec::new(),
-        Some(rx) => match rx.recv_timeout(DISK_TIMEOUT) {
-            Ok(list) => disks::lines(&list),
-            Err(_) => vec![disks::timeout_line()],
-        },
+        Some(None) => vec![disks::timeout_line()],
+        Some(Some(list)) => disks::lines(list),
     };
 
     let lg = cli
@@ -324,7 +263,6 @@ fn main() -> ExitCode {
     } else {
         ui::palette()
     };
-    let mut mon = monitor::Monitor::new(sys);
     let interactive = io::stdout().is_terminal() && !cli.once;
 
     monitor::run(
@@ -362,68 +300,6 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn args(a: &[&str]) -> Vec<String> {
-        a.iter().map(|s| s.to_string()).collect()
-    }
-
-    fn run_cli(a: &[&str]) -> Cli {
-        match parse_args(args(a)) {
-            Ok(Action::Run(c)) => c,
-            other => panic!("se esperaba Run, salió {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parse_defaults_run_the_live_monitor() {
-        let c = run_cli(&[]);
-        assert!(c.animate && !c.once && !c.no_logo);
-        assert!(c.logo.is_none() && c.hidden.is_empty());
-    }
-
-    #[test]
-    fn parse_simple_actions() {
-        assert_eq!(parse_args(args(&["-h"])), Ok(Action::Help));
-        assert_eq!(parse_args(args(&["--version"])), Ok(Action::Version));
-        assert_eq!(parse_args(args(&["--list-logos"])), Ok(Action::ListLogos));
-        assert_eq!(
-            parse_args(args(&["--list-modules"])),
-            Ok(Action::ListModules)
-        );
-    }
-
-    #[test]
-    fn parse_hides_modules_with_no_prefix_and_hide_list() {
-        assert_eq!(run_cli(&["--no-ip"]).hidden, vec!["ip"]);
-        assert_eq!(
-            run_cli(&["--no-gpu", "--hide", "IP,disks", "--hide=ip"]).hidden,
-            vec!["gpu", "ip", "disks"]
-        );
-    }
-
-    #[test]
-    fn parse_keeps_the_flags_that_start_with_no() {
-        let c = run_cli(&["--no-anim", "--no-logo", "--no-live"]);
-        assert!(!c.animate && c.no_logo && c.once);
-        assert!(c.hidden.is_empty());
-    }
-
-    #[test]
-    fn parse_logo_accepts_known_names_only() {
-        assert_eq!(run_cli(&["--logo", "arch"]).logo.as_deref(), Some("arch"));
-        assert_eq!(run_cli(&["--logo=tux"]).logo.as_deref(), Some("tux"));
-        assert!(parse_args(args(&["--logo", "no-existe"])).is_err());
-        assert!(parse_args(args(&["--logo"])).is_err());
-    }
-
-    #[test]
-    fn parse_rejects_unknown_options_and_modules() {
-        assert!(parse_args(args(&["--nope"])).is_err());
-        assert!(parse_args(args(&["--no-nada"])).is_err());
-        assert!(parse_args(args(&["--hide", "ip,nada"])).is_err());
-        assert!(parse_args(args(&["--once=1"])).is_err());
-        assert!(parse_args(args(&["--hide"])).is_err());
-    }
 
     #[test]
     fn left_column_without_logo_starts_with_the_meters() {

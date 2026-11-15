@@ -21,6 +21,15 @@ extern "C" fn on_sigterm(_: libc::c_int) {
     GOT_SIGTERM.store(true, Ordering::Relaxed);
 }
 
+/// Valores instantáneos de CPU y memoria (para la salida JSON).
+pub struct Snapshot {
+    pub cpu: f64,
+    pub used: u64,
+    pub total: u64,
+    pub swap_used: u64,
+    pub swap_total: u64,
+}
+
 pub struct Monitor {
     sys: System,
     cpu: Vec<f64>,
@@ -42,6 +51,20 @@ impl Monitor {
         }
         self.cpu
             .push(self.sys.global_cpu_info().cpu_usage() as f64 / 100.0);
+    }
+
+    /// Toma dos muestras separadas 250 ms (la CPU necesita dos para calcular el uso).
+    pub fn measure(&mut self) -> Snapshot {
+        self.sample();
+        thread::sleep(Duration::from_millis(250));
+        self.sample();
+        Snapshot {
+            cpu: self.cpu.last().copied().unwrap_or(0.0),
+            used: self.sys.used_memory(),
+            total: self.sys.total_memory(),
+            swap_used: self.sys.used_swap(),
+            swap_total: self.sys.total_swap(),
+        }
     }
 
     pub fn lines(&self, accent: &str) -> Vec<String> {
