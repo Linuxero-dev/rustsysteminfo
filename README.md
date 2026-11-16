@@ -39,9 +39,11 @@ Una alternativa moderna a Neofetch y Fastfetch.
 
 </details>
 
-## Instalación universal
+## Instalación
 
-Funciona en cualquier distribución Linux (x86_64 y ARM64) sin necesidad de tener Rust instalado.
+### Instalación rápida (recomendada para la mayoría de usuarios)
+
+Este método instala `rsi` en `/usr/local/bin`, disponible para todos los usuarios del sistema:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Linuxero-dev/rustsysteminfo/main/install.sh | sh
+curl -sSL https://raw.githubusercontent.com/Linuxero-dev/rustsysteminfo/main/install.sh | sudo sh
