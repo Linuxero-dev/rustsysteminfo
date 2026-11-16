@@ -51,6 +51,13 @@ cat >"$WORK/stub/gh" <<'STUB'
 STUB
 chmod +x "$WORK/stub/gh"
 
+# Simula sudo: simplemente ejecuta el comando sin elevación.
+cat >"$WORK/stub/sudo" <<'STUB'
+#!/bin/sh
+exec "$@"
+STUB
+chmod +x "$WORK/stub/sudo"
+
 fails=0
 check() {
     local desc="$1"
@@ -74,11 +81,12 @@ check "instala en una ruta relativa (./bin)" test -x "$WORK/cwd/bin/rsi"
 check "instala la página de manual junto a <prefijo>/bin" test -f "$WORK/cwd/share/man/man1/rsi.1"
 check "no deja ficheros temporales en el destino" test "$(ls -A "$WORK/cwd/bin")" = "rsi"
 
-STUB_MODE=ok install_sh
-check "instala en ~/.local/bin por defecto" test -x "$WORK/home/.local/bin/rsi"
+STUB_MODE=ok install_sh --local
+check "--local instala en ~/.local/bin" test -x "$WORK/home/.local/bin/rsi"
 
-install_sh --uninstall
-check "--uninstall elimina el binario por defecto" not test -e "$WORK/home/.local/bin/rsi"
+install_sh --uninstall --local
+check "--uninstall --local elimina el binario" not test -e "$WORK/home/.local/bin/rsi"
+
 install_sh --uninstall ./bin
 check "--uninstall con directorio relativo" not test -e "$WORK/cwd/bin/rsi"
 check "--uninstall elimina la página de manual" not test -e "$WORK/cwd/share/man/man1/rsi.1"
