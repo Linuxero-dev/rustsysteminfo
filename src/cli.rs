@@ -2,36 +2,39 @@ use crate::{completions, info, logo, ui};
 use std::fs;
 
 pub const HELP: &str = "rsi — información del sistema y monitor en vivo
+
 USO: rsi [OPCIONES]
 
 General:
   -h, --help            muestra esta ayuda
   -V, --version         muestra la versión
-      --once            imprime una vez y sale (sin monitor en vivo)
-      --no-anim         logo estático
-      --json            imprime los datos en JSON y sale
+  --once                imprime una vez y sale (sin monitor en vivo)
+  --no-anim             logo estático
+  --json                imprime los datos en JSON y sale
+  --no-cache            recalcula todo ignorando la caché
 
 Logo:
-      --logo NOMBRE     fuerza un logo (ver --list-logos)
-      --no-logo         no muestra el logo
-      --list-logos      lista los logos disponibles
+  --logo NOMBRE         fuerza un logo (ver --list-logos)
+  --no-logo             no muestra el logo
+  --list-logos          lista los logos disponibles
 
 Módulos:
-      --no-MÓDULO       oculta un módulo, p. ej. --no-ip o --no-gpu
-      --hide A,B        oculta varios módulos a la vez
-      --show A,B        muestra módulos que la configuración oculta
-      --list-modules    lista los módulos disponibles
+  --no-MÓDULO           oculta un módulo, p. ej. --no-ip o --no-gpu
+  --hide A,B            oculta varios módulos a la vez
+  --show A,B            muestra módulos que la configuración oculta
+  --list-modules        lista los módulos disponibles
 
 Configuración (~/.config/rsi/config):
-      --config RUTA     usa otro fichero de configuración
-      --no-config       ignora el fichero de configuración
-      --gen-config      imprime una configuración de ejemplo
+  --config RUTA         usa otro fichero de configuración
+  --no-config           ignora el fichero de configuración
+  --gen-config          imprime una configuración de ejemplo
 
 Shell:
-      --completions SH  imprime el completado para bash, zsh o fish
+  --completions SH      imprime el completado para bash, zsh o fish
 
 Por defecto permanece abierto (Enter, Esc o q para salir).
-Respeta la variable NO_COLOR.";
+Respeta la variable NO_COLOR.
+Caché en ~/.cache/rsi: se invalida al cambiar el sistema o al reiniciar.";
 
 pub const SAMPLE_CONFIG: &str = "# Configuración de rsi (~/.config/rsi/config)
 # Las opciones de la línea de comandos tienen prioridad sobre este fichero.
@@ -58,6 +61,7 @@ pub struct Cli {
     pub animate: bool,
     pub no_logo: bool,
     pub json: bool,
+    pub no_cache: bool,
     pub logo: Option<String>,
     pub hidden: Vec<String>,
 }
@@ -69,6 +73,7 @@ impl Default for Cli {
             animate: true,
             no_logo: false,
             json: false,
+            no_cache: false,
             logo: None,
             hidden: Vec::new(),
         }
@@ -247,6 +252,7 @@ pub fn parse_args(args: Vec<String>, base: Cli) -> Result<Action, String> {
             "--json" => cli.json = true,
             "--no-anim" | "--static" => cli.animate = false,
             "--no-logo" => cli.no_logo = true,
+            "--no-cache" => cli.no_cache = true,
             "--no-config" => {}
             "--config" => {
                 inline
@@ -321,7 +327,7 @@ mod tests {
     #[test]
     fn defaults_run_the_live_monitor() {
         let c = run_cli(&[]);
-        assert!(c.animate && !c.once && !c.no_logo && !c.json);
+        assert!(c.animate && !c.once && !c.no_logo && !c.json && !c.no_cache);
         assert!(c.logo.is_none() && c.hidden.is_empty());
     }
 
@@ -363,8 +369,14 @@ mod tests {
 
     #[test]
     fn keeps_the_flags_that_start_with_no() {
-        let c = run_cli(&["--no-anim", "--no-logo", "--no-live", "--no-config"]);
-        assert!(!c.animate && c.no_logo && c.once);
+        let c = run_cli(&[
+            "--no-anim",
+            "--no-logo",
+            "--no-live",
+            "--no-config",
+            "--no-cache",
+        ]);
+        assert!(!c.animate && c.no_logo && c.once && c.no_cache);
         assert!(c.hidden.is_empty());
         assert!(run_cli(&["--json"]).json);
     }
@@ -383,6 +395,7 @@ mod tests {
         assert!(parse(&["--no-nada"]).is_err());
         assert!(parse(&["--hide", "ip,nada"]).is_err());
         assert!(parse(&["--once=1"]).is_err());
+        assert!(parse(&["--no-cache=1"]).is_err());
         assert!(parse(&["--hide"]).is_err());
         assert!(parse(&["--config"]).is_err());
     }
@@ -435,18 +448,15 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let file = dir.join("config");
         let path = file.to_string_lossy().into_owned();
-
         let (c, w) = load_config(&ConfigSource::Default, &path).unwrap();
         assert_eq!(c, Cli::default());
         assert!(w.is_empty());
         assert!(load_config(&ConfigSource::Path(path.clone()), "").is_err());
-
         fs::write(&file, "hide = ip\n").unwrap();
         let (c, _) = load_config(&ConfigSource::Path(path.clone()), "").unwrap();
         assert_eq!(c.hidden, vec!["ip"]);
         let (c, _) = load_config(&ConfigSource::Off, &path).unwrap();
         assert!(c.hidden.is_empty());
-
         fs::write(&file, vec![b'#'; 70 * 1024]).unwrap();
         assert!(load_config(&ConfigSource::Path(path), "").is_err());
         let _ = fs::remove_dir_all(&dir);

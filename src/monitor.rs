@@ -1,8 +1,10 @@
+use crate::cache::Cache;
 use crate::ui::{bar, bold, dim, fit_width, human, pct_color, reset, spark};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     terminal,
 };
+use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -14,6 +16,9 @@ const WAVE_SPEED: f64 = 3.0;
 const HISTORY: usize = 12;
 const FRAME: Duration = Duration::from_millis(50);
 const SAMPLE: Duration = Duration::from_millis(500);
+const CPU_WINDOW: Duration = Duration::from_millis(100);
+const CPU_FRESH: u64 = 2;
+const MIN_WAIT: Duration = Duration::from_millis(1);
 
 pub type Row = (String, String);
 
@@ -30,6 +35,58 @@ pub struct Snapshot {
     pub total: u64,
     pub swap_used: u64,
     pub swap_total: u64,
+}
+
+fn parse_jiffies(stat: &str) -> Option<(u64, u64)> {
+    let mut it = stat.lines().next()?.split_whitespace();
+    if it.next()? != "cpu" {
+        return None;
+    }
+    let v: Vec<u64> = it.filter_map(|t| t.parse().ok()).collect();
+    if v.len() < 4 {
+        return None;
+    }
+    let total: u64 = v.iter().sum();
+    Some((total, v[3] + v.get(4).copied().unwrap_or(0)))
+}
+
+fn jiffies() -> Option<(u64, u64)> {
+    parse_jiffies(&fs::read_to_string("/proc/stat").ok()?)
+}
+
+fn usage(prev: (u64, u64), cur: (u64, u64)) -> Option<f64> {
+    let total = cur.0.checked_sub(prev.0)?;
+    let idle = cur.1.checked_sub(prev.1)?;
+    if total == 0 || idle > total {
+        return None;
+    }
+    Some((total - idle) as f64 / total as f64)
+}
+
+fn stored_sample(cache: &Cache) -> Option<(u64, u64)> {
+    let v = cache.hit("cpu", "")?;
+    let (t, i) = v.split_once(':')?;
+    Some((t.parse().ok()?, i.parse().ok()?))
+}
+
+fn remember(cache: &mut Cache, s: (u64, u64)) {
+    cache.store("cpu", "", &format!("{}:{}", s.0, s.1));
+}
+
+fn cpu_usage(cache: &mut Cache) -> f64 {
+    let Some(cur) = jiffies() else { return 0.0 };
+    if cache.age("cpu").is_some_and(|a| a <= CPU_FRESH) {
+        if let Some(prev) = stored_sample(cache) {
+            if let Some(u) = usage(prev, cur) {
+                remember(cache, cur);
+                return u;
+            }
+        }
+    }
+    thread::sleep(CPU_WINDOW);
+    let next = jiffies().unwrap_or(cur);
+    remember(cache, next);
+    usage(cur, next).unwrap_or(0.0)
 }
 
 pub struct Monitor {
@@ -55,13 +112,17 @@ impl Monitor {
             .push(self.sys.global_cpu_info().cpu_usage() as f64 / 100.0);
     }
 
-    /// Toma dos muestras separadas 250 ms (la CPU necesita dos para calcular el uso).
-    pub fn measure(&mut self) -> Snapshot {
-        self.sample();
-        thread::sleep(Duration::from_millis(250));
-        self.sample();
+    pub fn seed(&mut self, cpu: f64) {
+        self.sys.refresh_memory();
+        self.cpu.clear();
+        self.cpu.push(cpu.clamp(0.0, 1.0));
+    }
+
+    pub fn measure(&mut self, cache: &mut Cache) -> Snapshot {
+        let cpu = cpu_usage(cache);
+        self.seed(cpu);
         Snapshot {
-            cpu: self.cpu.last().copied().unwrap_or(0.0),
+            cpu,
             used: self.sys.used_memory(),
             total: self.sys.total_memory(),
             swap_used: self.sys.used_swap(),
@@ -111,10 +172,9 @@ impl Monitor {
     }
 }
 
-fn out(bytes: &[u8]) {
+fn out(bytes: &[u8]) -> bool {
     let mut o = io::stdout().lock();
-    let _ = o.write_all(bytes);
-    let _ = o.flush();
+    o.write_all(bytes).is_ok() && o.flush().is_ok()
 }
 
 struct RawGuard;
@@ -122,21 +182,35 @@ struct RawGuard;
 impl RawGuard {
     fn new() -> Option<Self> {
         terminal::enable_raw_mode().ok()?;
-        out(b"\x1b[?1049h\x1b[?25l\x1b[?7l");
+        if !out(b"\x1b[?1049h\x1b[?25l\x1b[?7l") {
+            let _ = terminal::disable_raw_mode();
+            return None;
+        }
         Some(Self)
     }
 }
 
 impl Drop for RawGuard {
     fn drop(&mut self) {
-        out(b"\x1b[?7h\x1b[?25h\x1b[?1049l");
+        let _ = out(b"\x1b[?7h\x1b[?25h\x1b[?1049l");
         let _ = terminal::disable_raw_mode();
     }
 }
 
-fn size() -> (usize, usize) {
-    let (c, r) = terminal::size().unwrap_or((80, 24));
-    ((c as usize).max(20), (r as usize).max(3))
+fn size() -> Option<(usize, usize)> {
+    let (c, r) = terminal::size().ok()?;
+    Some(((c as usize).max(20), (r as usize).max(3)))
+}
+
+fn wait_for(paused: bool, animate: bool, since_draw: Duration, since_sample: Duration) -> Duration {
+    let base = if paused {
+        SAMPLE
+    } else if animate {
+        FRAME.saturating_sub(since_draw)
+    } else {
+        SAMPLE.saturating_sub(since_sample)
+    };
+    base.max(MIN_WAIT)
 }
 
 fn footer(paused: bool) -> String {
@@ -148,7 +222,20 @@ fn footer(paused: bool) -> String {
     format!("{}{text}{}", dim(), reset())
 }
 
-fn draw(frame: &[Row], paused: bool, cols: usize, rows: usize, full: bool) -> usize {
+fn dirty(prev: &[Row], frame: &[Row], n: usize, full: bool) -> Vec<usize> {
+    (0..n)
+        .filter(|&i| full || prev.get(i) != frame.get(i))
+        .collect()
+}
+
+fn draw(
+    frame: &[Row],
+    prev: &mut Vec<Row>,
+    paused: bool,
+    cols: usize,
+    rows: usize,
+    full: bool,
+) -> Option<usize> {
     let w = cols.saturating_sub(1);
     let n = frame.len().min(rows.saturating_sub(2));
     let mut buf = String::with_capacity(n * (w + 16) + 32);
@@ -156,14 +243,19 @@ fn draw(frame: &[Row], paused: bool, cols: usize, rows: usize, full: bool) -> us
     if full {
         buf += "\x1b[H\x1b[2J";
     }
-    for (i, (live, fixed)) in frame.iter().take(n).enumerate() {
+    for i in dirty(prev, frame, n, full) {
+        let (live, fixed) = &frame[i];
         buf += &format!("\x1b[{};1H\x1b[2K", i + 1);
         buf += &fit_width(&format!("{live}{fixed}"), w);
     }
     buf += &format!("\x1b[{};1H\x1b[2K{}", n + 2, fit_width(&footer(paused), w));
     buf += "\x1b[?2026l";
-    out(buf.as_bytes());
-    n + 2
+    if !out(buf.as_bytes()) {
+        return None;
+    }
+    prev.clear();
+    prev.extend(frame.iter().take(n).cloned());
+    Some(n + 2)
 }
 
 fn is_quit(k: &KeyEvent) -> bool {
@@ -173,12 +265,14 @@ fn is_quit(k: &KeyEvent) -> bool {
     ) || (k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL))
 }
 
-fn print_once(mon: &mut Monitor, render: &mut impl FnMut(&Monitor, f64, usize, usize) -> Vec<Row>) {
-    mon.sample();
-    thread::sleep(Duration::from_millis(250));
-    mon.sample();
+fn print_once(
+    mon: &mut Monitor,
+    cache: &mut Cache,
+    render: &mut impl FnMut(&Monitor, f64, usize, usize) -> Vec<Row>,
+) {
+    mon.seed(cpu_usage(cache));
     let cols = if io::stdout().is_terminal() {
-        size().0
+        size().map(|(c, _)| c).unwrap_or(80)
     } else {
         usize::MAX
     };
@@ -200,6 +294,7 @@ pub fn run(
     mon: &mut Monitor,
     animate: bool,
     interactive: bool,
+    cache: &mut Cache,
     mut render: impl FnMut(&Monitor, f64, usize, usize) -> Vec<Row>,
 ) {
     if interactive {
@@ -212,7 +307,7 @@ pub fn run(
     }
     let guard = if interactive { RawGuard::new() } else { None };
     if guard.is_none() {
-        return print_once(mon, &mut render);
+        return print_once(mon, cache, &mut render);
     }
 
     let mut start = Instant::now();
@@ -221,13 +316,14 @@ pub fn run(
     let mut paused_at: Option<Instant> = None;
     let (mut seen, mut footer_row, mut full) = ((0, 0), 0, true);
     let mut prev_len = 0;
-    mon.sample();
+    let mut prev: Vec<Row> = Vec::new();
+    mon.seed(cpu_usage(cache));
 
     loop {
         if GOT_SIGTERM.load(Ordering::Relaxed) {
             break;
         }
-        let (cols, rows) = size();
+        let Some((cols, rows)) = size() else { break };
         if (cols, rows) != seen {
             seen = (cols, rows);
             full = true;
@@ -254,17 +350,14 @@ pub fn run(
                 prev_len = frame.len();
                 full = true;
             }
-            footer_row = draw(&frame, paused, cols, rows, full);
+            let Some(row) = draw(&frame, &mut prev, paused, cols, rows, full) else {
+                break;
+            };
+            footer_row = row;
             full = false;
             last_draw = Instant::now();
         }
-        let wait = if paused {
-            SAMPLE
-        } else if animate {
-            FRAME.saturating_sub(last_draw.elapsed())
-        } else {
-            SAMPLE.saturating_sub(last.elapsed())
-        };
+        let wait = wait_for(paused, animate, last_draw.elapsed(), last.elapsed());
         match event::poll(wait) {
             Ok(false) => {}
             Ok(true) => match event::read() {
@@ -278,7 +371,9 @@ pub fn run(
                             None => paused_at = Some(Instant::now()),
                         }
                         let f = fit_width(&footer(paused_at.is_some()), cols.saturating_sub(1));
-                        out(format!("\x1b[{footer_row};1H\x1b[2K{f}").as_bytes());
+                        if !out(format!("\x1b[{footer_row};1H\x1b[2K{f}").as_bytes()) {
+                            break;
+                        }
                     }
                 }
                 Ok(_) => {}
@@ -297,6 +392,10 @@ mod tests {
         KeyEvent::new(code, modifiers)
     }
 
+    fn row(s: &str) -> Row {
+        (s.to_string(), String::new())
+    }
+
     #[test]
     fn quit_keys_are_enter_esc_q_and_ctrl_c() {
         for code in [KeyCode::Enter, KeyCode::Esc, KeyCode::Char('q')] {
@@ -311,5 +410,51 @@ mod tests {
     fn footer_changes_with_the_paused_state() {
         assert!(footer(true).contains("PAUSADO"));
         assert!(!footer(false).contains("PAUSADO"));
+    }
+
+    #[test]
+    fn jiffies_sum_every_field_and_count_iowait_as_idle() {
+        let s = "cpu  10 0 10 70 10 0 0 0 0 0\ncpu0 1 0 1 7 0 0 0 0 0 0\nintr 1\n";
+        assert_eq!(parse_jiffies(s), Some((100, 80)));
+        assert_eq!(parse_jiffies("cpu  1 2\n"), None);
+        assert_eq!(parse_jiffies("procs_running 2\n"), None);
+        assert_eq!(parse_jiffies(""), None);
+    }
+
+    #[test]
+    fn usage_rejects_resets_and_empty_windows() {
+        assert_eq!(usage((100, 80), (200, 130)), Some(0.5));
+        assert_eq!(usage((200, 130), (100, 80)), None);
+        assert_eq!(usage((100, 80), (100, 80)), None);
+        assert_eq!(usage((100, 80), (200, 250)), None);
+    }
+
+    #[test]
+    fn seed_clamps_the_value_and_restarts_the_history() {
+        let mut m = Monitor::new(System::new());
+        m.seed(2.0);
+        assert_eq!(m.cpu.last().copied(), Some(1.0));
+        m.seed(-1.0);
+        assert_eq!(m.cpu.len(), 1);
+        assert_eq!(m.cpu.last().copied(), Some(0.0));
+    }
+
+    #[test]
+    fn only_changed_rows_are_repainted() {
+        let a = vec![row("uno"), row("dos"), row("tres")];
+        let b = vec![row("uno"), row("cambio"), row("tres")];
+        assert!(dirty(&a, &a, 3, false).is_empty());
+        assert_eq!(dirty(&a, &b, 3, false), vec![1]);
+        assert_eq!(dirty(&a, &b, 3, true), vec![0, 1, 2]);
+        assert_eq!(dirty(&[], &b, 3, false), vec![0, 1, 2]);
+        assert_eq!(dirty(&a, &b, 1, false), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn the_loop_never_waits_less_than_the_floor() {
+        assert_eq!(wait_for(false, true, Duration::ZERO, Duration::ZERO), FRAME);
+        assert_eq!(wait_for(false, true, FRAME * 2, Duration::ZERO), MIN_WAIT);
+        assert_eq!(wait_for(true, true, FRAME * 2, Duration::ZERO), SAMPLE);
+        assert_eq!(wait_for(false, false, Duration::ZERO, SAMPLE * 2), MIN_WAIT);
     }
 }

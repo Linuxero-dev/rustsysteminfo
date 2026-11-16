@@ -10,6 +10,7 @@ const FLAGS: &[(&str, &str)] = &[
     ("no-anim", "logo estatico"),
     ("no-logo", "no muestra el logo"),
     ("json", "imprime los datos en JSON"),
+    ("no-cache", "recalcula todo ignorando la cache"),
     ("list-logos", "lista los logos"),
     ("list-modules", "lista los modulos"),
     ("gen-config", "imprime una configuracion de ejemplo"),
@@ -150,10 +151,13 @@ mod tests {
         let b = script("bash").unwrap();
         assert!(b.contains("complete -F _rsi rsi") && b.contains("--no-ip"));
         assert!(b.contains("arch") && b.contains("--completions"));
+        assert!(b.contains("--no-cache"));
         let z = script("zsh").unwrap();
         assert!(z.starts_with("#compdef rsi") && z.contains("'--no-gpu["));
+        assert!(z.contains("--no-cache"));
         let f = script("fish").unwrap();
         assert!(f.contains("complete -c rsi -l logo") && f.contains("-l no-ip"));
+        assert!(f.contains("-l no-cache"));
         assert!(script("tcsh").is_none());
     }
 }

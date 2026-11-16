@@ -1,35 +1,28 @@
-# Cambios
+## [0.5.0] - sin publicar
 
-Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
-
-## [0.4.2]
-### Corregido
-- El instalador explica cómo ejecutar `rsi` cuando el destino no está en el PATH (caso típico de Ubuntu justo tras instalar).
-### Cambiado
-- La ola del logo es más lenta y suave.
-
-## [0.4.1]
-### Corregido
-- Las líneas más anchas que la terminal ya no pierden los colores al recortarse.
-
-## [0.4.0]
 ### Añadido
-- Módulos nuevos: WM, resolución con frecuencia de refresco, versión del shell, temperatura de CPU y VRAM de la GPU. Núcleos/hilos siempre visibles.
-- Fichero de configuración `~/.config/rsi/config` (`hide`, `logo`, `no_logo`, `animate`), con `--config`, `--no-config`, `--show` y `--gen-config`.
-- Salida `--json`.
-- Completado de comandos para bash, zsh y fish (`--completions`).
-- Paleta de 256 colores y ancho real de caracteres (CJK, emojis y acentos combinados).
-- Títulos de sección con línea decorativa.
-- El instalador verifica la procedencia con `gh` cuando está instalado (`RSI_VERIFY_ATTESTATION`).
+- Caché en `~/.cache/rsi` para el conteo de paquetes y el nombre de la GPU,
+  invalidada automáticamente al cambiar el sistema o al reiniciar.
+- Opción `--no-cache` para recalcular todo ignorando la caché.
+- Muestreo de CPU sin espera fija: reutiliza la muestra anterior si es reciente.
 
-## [0.3.0]
-### Añadido
-- Opciones `-V/--version`, `--logo`, `--no-logo`, `--list-logos`, `--no-MÓDULO`, `--hide` y `--list-modules`.
-- Módulo de IP local.
 ### Corregido
-- El monitor ya no redibuja con cada evento del ratón, lo que disparaba el uso de CPU al girar la rueda.
+- **Procesos huérfanos que consumían un núcleo completo.** Si `rsi` perdía su
+  terminal de forma brusca (cierre del emulador, caída de una sesión SSH, o un
+  script que lo lanza y muere sin esperarlo), el proceso quedaba vivo sin
+  terminal y entraba en un bucle que ocupaba entre el 60 % y el 90 % de un
+  núcleo de forma permanente. Ahora detecta que la terminal desapareció, tanto
+  por fallo del ioctl de tamaño como por fallo al escribir, y sale limpiando la
+  pantalla. Además el bucle principal nunca espera menos de 1 ms por vuelta, de
+  modo que ningún fallo puede degenerar en un giro a máxima velocidad.
+- Los textos que no caben en el ancho de la terminal se recortan con `…` en
+  lugar de cortarse a mitad de carácter.
+- Ancho correcto en terminal para símbolos y emojis que se medían como una
+  columna: `⌚ ⏰ ✅ ❌ 🟠 🩷 🀄`, banderas y caracteres invisibles.
+- La paleta de colores ya no tiene un cuadro negro invisible sobre fondos
+  oscuros: lleva un marco gris que delimita cada muestra.
 
-## [0.2.5]
-### Corregido
-- Restos de líneas al cambiar entre layouts en el monitor en vivo.
-- Bloque de código sin cerrar en el README.
+### Rendimiento
+- El arranque en caliente pasa de ~880 ms a ~30-50 ms gracias a la caché.
+- El modo en vivo repinta solo las filas que cambian y emite menos códigos de
+  color: de ~3,2 % de un núcleo y ~250 KiB/s a cerca del 1 % y menos de 80 KiB/s.

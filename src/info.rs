@@ -1,3 +1,4 @@
+use crate::cache::{self, Cache};
 use crate::ui::{clean, human};
 use std::collections::HashSet;
 use std::io::Read;
@@ -800,13 +801,68 @@ fn battery() -> Option<String> {
         })
 }
 
-pub fn gather(sys: &System, hidden: &[String]) -> Info {
+fn packages_fp() -> String {
+    let home = var("HOME").unwrap_or_default();
+    let user_flatpak = format!("{home}/.local/share/flatpak/app");
+    cache::fingerprint(&[
+        "/usr/lib/sysimage/rpm/rpmdb.sqlite",
+        "/usr/lib/sysimage/rpm/rpmdb.sqlite-wal",
+        "/var/lib/rpm/rpmdb.sqlite",
+        "/var/lib/rpm/Packages",
+        "/var/lib/dpkg/status",
+        "/var/lib/pacman/local",
+        "/lib/apk/db/installed",
+        "/var/db/xbps",
+        "/var/db/pkg",
+        "/var/log/packages",
+        "/var/lib/flatpak/app",
+        "/var/lib/snapd/snaps",
+        "/run/current-system/sw",
+        user_flatpak.as_str(),
+    ])
+}
+
+fn gpu_fp() -> String {
+    let mut ids: Vec<String> = fs::read_dir("/sys/class/drm")
+        .map(|d| {
+            d.flatten()
+                .filter_map(|e| {
+                    let n = e.file_name().to_string_lossy().into_owned();
+                    if !n.starts_with("card") || n.contains('-') {
+                        return None;
+                    }
+                    let v = read(e.path().join("device/vendor")).unwrap_or_default();
+                    let id = read(e.path().join("device/device")).unwrap_or_default();
+                    Some(format!("{n}:{v}:{id}"))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    ids.sort();
+    ids.join(";")
+}
+
+pub fn gather(sys: &System, hidden: &[String], cache: &mut Cache) -> Info {
     let show = |m: &str| !is_hidden(hidden, m);
+    let pkg_fp = if show("packages") {
+        packages_fp()
+    } else {
+        String::new()
+    };
+    let gpu_fp = if show("gpu") { gpu_fp() } else { String::new() };
+    let pkg_hit = cache.hit("packages", &pkg_fp);
+    let gpu_hit = cache.hit("gpu", &gpu_fp);
+    let pkg_miss = pkg_hit.is_none();
+    let gpu_miss = gpu_hit.is_none();
     let (pkg, de, gpu, theme, ip, wm) = thread::scope(|s| {
         let (a, b, c, d, e, f) = (
-            s.spawn(|| show("packages").then(packages).flatten()),
+            s.spawn(|| {
+                show("packages")
+                    .then(|| pkg_hit.clone().or_else(packages))
+                    .flatten()
+            }),
             s.spawn(|| show("de").then(desktop).flatten()),
-            s.spawn(|| show("gpu").then(gpus).flatten()),
+            s.spawn(|| show("gpu").then(|| gpu_hit.clone().or_else(gpus)).flatten()),
             s.spawn(|| {
                 if show("theme") || show("icons") || show("font") {
                     appearance()
@@ -826,6 +882,16 @@ pub fn gather(sys: &System, hidden: &[String]) -> Info {
             f.join().ok().flatten(),
         )
     });
+    if pkg_miss {
+        if let Some(v) = &pkg {
+            cache.store("packages", &pkg_fp, v);
+        }
+    }
+    if gpu_miss {
+        if let Some(v) = &gpu {
+            cache.store("gpu", &gpu_fp, v);
+        }
+    }
     let [theme, icons, fnt] = theme;
     let (id, like, pretty) = os_release();
     let os = pretty
@@ -838,25 +904,51 @@ pub fn gather(sys: &System, hidden: &[String]) -> Info {
             "Sistema",
             hidden,
             vec![
-                ("os", "OS", Some(format!("{os} {}", env::consts::ARCH))),
+                (
+                    "os",
+                    "OS",
+                    show("os").then(|| format!("{os} {}", env::consts::ARCH)),
+                ),
                 (
                     "host",
                     "Host",
-                    host_model().or_else(|| read("/proc/device-tree/model")),
+                    show("host")
+                        .then(|| host_model().or_else(|| read("/proc/device-tree/model")))
+                        .flatten(),
                 ),
-                ("kernel", "Kernel", System::kernel_version()),
-                ("uptime", "Uptime", Some(uptime(System::uptime()))),
-                ("init", "Init", read("/proc/1/comm")),
-                ("processes", "Procesos", processes()),
+                (
+                    "kernel",
+                    "Kernel",
+                    show("kernel").then(System::kernel_version).flatten(),
+                ),
+                (
+                    "uptime",
+                    "Uptime",
+                    show("uptime").then(|| uptime(System::uptime())),
+                ),
+                (
+                    "init",
+                    "Init",
+                    show("init").then(|| read("/proc/1/comm")).flatten(),
+                ),
+                (
+                    "processes",
+                    "Procesos",
+                    show("processes").then(processes).flatten(),
+                ),
                 (
                     "load",
                     "Carga",
-                    Some(format!("{:.2} {:.2} {:.2}", la.one, la.five, la.fifteen)),
+                    show("load").then(|| format!("{:.2} {:.2} {:.2}", la.one, la.five, la.fifteen)),
                 ),
                 ("packages", "Paquetes", pkg),
-                ("shell", "Shell", shell()),
-                ("terminal", "Terminal", terminal()),
-                ("locale", "Idioma", locale()),
+                ("shell", "Shell", show("shell").then(shell).flatten()),
+                (
+                    "terminal",
+                    "Terminal",
+                    show("terminal").then(terminal).flatten(),
+                ),
+                ("locale", "Idioma", show("locale").then(locale).flatten()),
                 ("ip", "IP", ip),
             ],
         ),
@@ -866,7 +958,11 @@ pub fn gather(sys: &System, hidden: &[String]) -> Info {
             vec![
                 ("de", "DE", de),
                 ("wm", "WM", wm),
-                ("display", "Pantalla", displays()),
+                (
+                    "display",
+                    "Pantalla",
+                    show("display").then(displays).flatten(),
+                ),
                 ("theme", "Tema", theme),
                 ("icons", "Iconos", icons),
                 ("font", "Fuente", fnt),
@@ -876,10 +972,14 @@ pub fn gather(sys: &System, hidden: &[String]) -> Info {
             "Hardware",
             hidden,
             vec![
-                ("cpu", "CPU", cpu(sys)),
-                ("temp", "Temp", cpu_temp()),
+                ("cpu", "CPU", show("cpu").then(|| cpu(sys)).flatten()),
+                ("temp", "Temp", show("temp").then(cpu_temp).flatten()),
                 ("gpu", "GPU", gpu),
-                ("battery", "Batería", battery()),
+                (
+                    "battery",
+                    "Batería",
+                    show("battery").then(battery).flatten(),
+                ),
             ],
         ),
     ];
@@ -1035,5 +1135,11 @@ mod tests {
         assert_eq!(ini(&p, "B", "vacio"), None);
         assert_eq!(ini(&p, "C", "k"), None);
         let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn fingerprints_are_stable_between_calls() {
+        assert_eq!(packages_fp(), packages_fp());
+        assert_eq!(gpu_fp(), gpu_fp());
     }
 }

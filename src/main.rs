@@ -1,4 +1,5 @@
 mod anim;
+mod cache;
 mod cli;
 mod completions;
 mod disks;
@@ -224,13 +225,16 @@ fn main() -> ExitCode {
         rx
     });
 
-    let info = info::gather(&sys, &cli.hidden);
+    let mut store = cache::Cache::load(!cli.no_cache);
+    let info = info::gather(&sys, &cli.hidden, &mut store);
+    store.save();
     // None = módulo oculto; Some(None) = tiempo agotado; Some(Some(lista)) = datos.
     let disk_list = disk_rx.map(|rx| rx.recv_timeout(DISK_TIMEOUT).ok());
     let mut mon = monitor::Monitor::new(sys);
 
     if cli.json {
-        let snap = mon.measure();
+        let snap = mon.measure(&mut store);
+        store.save();
         let shown = disk_list.as_ref().and_then(|d| d.as_deref());
         print_text(&json::render(
             env!("CARGO_PKG_VERSION"),
@@ -269,6 +273,7 @@ fn main() -> ExitCode {
         &mut mon,
         cli.animate && interactive,
         interactive,
+        &mut store,
         |m, phase, cols, rows| {
             let live = m.lines(&accent);
             let logo_lines = if cli.no_logo {
@@ -293,6 +298,7 @@ fn main() -> ExitCode {
             }
         },
     );
+    store.save();
 
     ExitCode::SUCCESS
 }
