@@ -54,7 +54,6 @@ for arg in "$@"; do
     esac
 done
 
-# Determinar directorio de instalación
 if [ -z "$INSTALL_DIR" ]; then
     if [ "$LOCAL_INSTALL" -eq 1 ]; then
         [ -n "${HOME:-}" ] || die "HOME no está definido; indica un directorio de destino"
@@ -64,13 +63,11 @@ if [ -z "$INSTALL_DIR" ]; then
     fi
 fi
 
-# Ruta absoluta: más abajo se cambia de directorio y una ruta relativa dejaría de valer.
 case "$INSTALL_DIR" in
     /*) ;;
     *) INSTALL_DIR="$(pwd)/$INSTALL_DIR" ;;
 esac
 
-# La página de manual solo se gestiona en instalaciones del tipo <prefijo>/bin.
 MAN_DIR=""
 if [ "$(basename "$INSTALL_DIR")" = "bin" ]; then
     MAN_DIR="$(dirname "$INSTALL_DIR")/share/man/man1"
@@ -78,27 +75,18 @@ fi
 
 if [ "$UNINSTALL" -eq 1 ]; then
     echo "Desinstalando $BIN_NAME de $INSTALL_DIR..."
-    
-    # Determinar si necesitamos sudo
     if [ "$INSTALL_DIR" = "/usr/local/bin" ] || [ "$INSTALL_DIR" = "/usr/bin" ]; then
         if command -v sudo >/dev/null 2>&1; then
             sudo rm -f -- "$INSTALL_DIR/$BIN_NAME"
-            if [ -n "$MAN_DIR" ]; then
-                sudo rm -f -- "$MAN_DIR/$BIN_NAME.1"
-            fi
+            [ -n "$MAN_DIR" ] && sudo rm -f -- "$MAN_DIR/$BIN_NAME.1"
         else
             rm -f -- "$INSTALL_DIR/$BIN_NAME" 2>/dev/null || die "no se pudo desinstalar (necesitas sudo)"
-            if [ -n "$MAN_DIR" ]; then
-                rm -f -- "$MAN_DIR/$BIN_NAME.1" 2>/dev/null || true
-            fi
+            [ -n "$MAN_DIR" ] && rm -f -- "$MAN_DIR/$BIN_NAME.1" 2>/dev/null || true
         fi
     else
         rm -f -- "$INSTALL_DIR/$BIN_NAME"
-        if [ -n "$MAN_DIR" ]; then
-            rm -f -- "$MAN_DIR/$BIN_NAME.1"
-        fi
+        [ -n "$MAN_DIR" ] && rm -f -- "$MAN_DIR/$BIN_NAME.1"
     fi
-    
     echo "Desinstalado con éxito."
     exit 0
 fi
@@ -176,7 +164,6 @@ case "$ATTEST" in
         ;;
 esac
 
-# Se extrae en un directorio temporal y solo se instalan los ficheros esperados.
 mkdir "$TMP_DIR/extract"
 tar -xzf "$TMP_DIR/$ASSET_NAME" -C "$TMP_DIR/extract" || die "el paquete descargado no es válido"
 
@@ -184,7 +171,6 @@ if [ ! -f "$TMP_DIR/extract/$BIN_NAME" ] || [ -L "$TMP_DIR/extract/$BIN_NAME" ];
     die "el paquete no contiene el binario $BIN_NAME"
 fi
 
-# Determinar si necesitamos sudo para la instalación
 NEED_SUDO=0
 if [ "$INSTALL_DIR" = "/usr/local/bin" ] || [ "$INSTALL_DIR" = "/usr/bin" ]; then
     if [ ! -w "$INSTALL_DIR" ]; then
@@ -195,7 +181,7 @@ if [ "$INSTALL_DIR" = "/usr/local/bin" ] || [ "$INSTALL_DIR" = "/usr/bin" ]; the
             echo "Aviso: no hay permisos para escribir en $INSTALL_DIR y sudo no está disponible." >&2
             echo "       Instalando en \$HOME/.local/bin en su lugar." >&2
             INSTALL_DIR="$HOME/.local/bin"
-            if [ -n "$MAN_DIR" ]; then
+            if [ "$(basename "$INSTALL_DIR")" = "bin" ]; then
                 MAN_DIR="$(dirname "$INSTALL_DIR")/share/man/man1"
             fi
             NEED_SUDO=0
@@ -213,7 +199,6 @@ mkdir -p "$INSTALL_DIR" 2>/dev/null || {
 
 echo "Instalando en $INSTALL_DIR/$BIN_NAME..."
 
-# Se copia con otro nombre y se renombra: es atómico y funciona aunque rsi esté en ejecución.
 if [ "$NEED_SUDO" -eq 1 ]; then
     sudo install -m 755 "$TMP_DIR/extract/$BIN_NAME" "$INSTALL_DIR/.$BIN_NAME.new.$$"
     sudo mv -f "$INSTALL_DIR/.$BIN_NAME.new.$$" "$INSTALL_DIR/$BIN_NAME"
@@ -240,11 +225,10 @@ fi
 
 echo "¡Instalación exitosa!"
 
-# Solo mostrar mensaje de PATH si es una instalación local
 if [ "$INSTALL_DIR" != "/usr/local/bin" ] && [ "$INSTALL_DIR" != "/usr/bin" ]; then
     case ":${PATH:-}:" in
-        *":$INSTALL_DIR:"*) 
-            echo "Ejecuta: $BIN_NAME" 
+        *":$INSTALL_DIR:"*)
+            echo "Ejecuta: $BIN_NAME"
             ;;
         *)
             echo ""
