@@ -1,4 +1,4 @@
-## [0.5.0] - sin publicar
+## [0.5.0] - 2026-11-17
 
 ### Añadido
 - Caché en `~/.cache/rsi` para el conteo de paquetes y el nombre de la GPU,
@@ -26,3 +26,6 @@
 - El arranque en caliente pasa de ~880 ms a ~30-50 ms gracias a la caché.
 - El modo en vivo repinta solo las filas que cambian y emite menos códigos de
   color: de ~3,2 % de un núcleo y ~250 KiB/s a cerca del 1 % y menos de 80 KiB/s.
+  
+[0.5.0]: https://github.com/Linuxero-dev/rustsysteminfo/compare/v0.4.2...v0.5.0
+[0.4.2]: https://github.com/Linuxero-dev/rustsysteminfo/releases/tag/v0.4.2
