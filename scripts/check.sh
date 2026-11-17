@@ -37,9 +37,6 @@ elif ! printf '%s' "$origin" | grep -qi 'Linuxero-dev/rustsysteminfo'; then
 fi
 
 branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
-if [ "$branch" = "main" ]; then
-    warn "estás en main: es mejor subir una rama y abrir un Pull Request para que corra el CI"
-fi
 
 step "Cargo.lock existe y no está ignorado por git" \
     bash -c 'test -f Cargo.lock && ! git check-ignore -q Cargo.lock'
@@ -52,7 +49,11 @@ step "Formato (cargo fmt)" cargo fmt --all --check
 step "Lints (cargo clippy, avisos = error)" cargo clippy --all-targets --locked -- -D warnings
 step "Tests (cargo test)" cargo test --locked
 
-step "Tests con terminal simulada" script -qec "cargo test --locked" /dev/null
+if have script; then
+    step "Tests con terminal simulada" script -qec "cargo test --locked" /dev/null
+else
+    warn "'script' no está instalado: se omiten los tests con terminal simulada"
+fi
 step "Compilación release" cargo build --release --locked
 step "Ejecución: rsi --help" ./target/release/rsi --help >/dev/null
 step "Ejecución: rsi --once" ./target/release/rsi --once >/dev/null

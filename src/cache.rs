@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
-use std::fs;
+use std::fs::{self, DirBuilder, OpenOptions};
+use std::io::Write;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -27,11 +29,33 @@ pub fn fingerprint(paths: &[&str]) -> String {
     let mut s = String::new();
     for p in paths {
         match fs::metadata(p) {
-            Ok(m) => s.push_str(&format!("{p}:{}:{};", stamp(&m), m.len())),
+            Ok(m) => {
+                // Si la ruta es un enlace (p. ej. /run/current-system/sw en NixOS), su destino
+                // identifica la generación aunque la fecha del directorio no cambie.
+                let link = fs::read_link(p)
+                    .map(|t| format!("->{}", t.display()))
+                    .unwrap_or_default();
+                s.push_str(&format!("{p}:{}:{}{link};", stamp(&m), m.len()));
+            }
             Err(_) => s.push_str(&format!("{p}:ausente;")),
         }
     }
     s
+}
+
+/// Huella de los hijos directos de un directorio: cantidad y fecha más reciente.
+/// Sirve para bases como /var/db/pkg (Portage), donde instalar un paquete modifica
+/// el directorio de su categoría y no el directorio raíz.
+pub fn fingerprint_children(dir: &str) -> String {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return format!("{dir}/*:ausente;");
+    };
+    let (mut count, mut newest) = (0u64, 0u64);
+    for m in entries.flatten().filter_map(|e| e.metadata().ok()) {
+        count += 1;
+        newest = newest.max(stamp(&m));
+    }
+    format!("{dir}/*:{count}:{newest};")
 }
 
 fn dir() -> Option<PathBuf> {
@@ -126,7 +150,13 @@ impl Cache {
     pub fn save(&self) {
         let Some(path) = &self.path else { return };
         let Some(parent) = path.parent() else { return };
-        if fs::create_dir_all(parent).is_err() {
+        // Directorio privado (0700): la caché solo la lee y escribe su propietario.
+        if DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(parent)
+            .is_err()
+        {
             return;
         }
         let mut text = format!("boot\t{}\n", self.boot);
@@ -138,9 +168,17 @@ impl Cache {
         if text.len() as u64 > MAX_BYTES {
             return;
         }
-        let tmp = path.with_extension("tmp");
-        if fs::write(&tmp, text).is_ok() {
-            let _ = fs::rename(&tmp, path);
+        // Temporal único por proceso, creado en exclusiva (no sigue enlaces) y con modo 0600.
+        let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
+        let _ = fs::remove_file(&tmp);
+        let written = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&tmp)
+            .and_then(|mut f| f.write_all(text.as_bytes()));
+        if written.is_err() || fs::rename(&tmp, path).is_err() {
+            let _ = fs::remove_file(&tmp);
         }
     }
 }
@@ -234,6 +272,48 @@ mod tests {
         fs::write(&f, "ab").unwrap();
         assert_ne!(ausente, uno);
         assert_ne!(uno, fingerprint(&[&p]));
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn fingerprint_follows_where_a_link_points() {
+        let d = tmp("link");
+        fs::create_dir_all(d.join("a")).unwrap();
+        fs::create_dir_all(d.join("b")).unwrap();
+        let l = d.join("sw");
+        let p = l.to_string_lossy().into_owned();
+        std::os::unix::fs::symlink(d.join("a"), &l).unwrap();
+        let antes = fingerprint(&[&p]);
+        fs::remove_file(&l).unwrap();
+        std::os::unix::fs::symlink(d.join("b"), &l).unwrap();
+        assert_ne!(antes, fingerprint(&[&p]));
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn children_fingerprint_notices_new_entries() {
+        let d = tmp("kids");
+        fs::create_dir_all(d.join("cat")).unwrap();
+        let p = d.to_string_lossy().into_owned();
+        let uno = fingerprint_children(&p);
+        fs::create_dir_all(d.join("otra")).unwrap();
+        assert_ne!(uno, fingerprint_children(&p));
+        assert!(fingerprint_children("/ruta/que/no/existe").contains("ausente"));
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn saved_files_are_private_and_leave_no_temporary_behind() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tmp("perm");
+        let mut c = at(&d);
+        c.store("k", "fp", "v");
+        c.save();
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&d), 0o700);
+        assert_eq!(mode(&d.join(NAME)), 0o600);
+        let names: Vec<_> = fs::read_dir(&d).unwrap().flatten().collect();
+        assert_eq!(names.len(), 1);
         let _ = fs::remove_dir_all(&d);
     }
 

@@ -1,5 +1,7 @@
 use crate::logo::Logo;
 use crate::ui::{reset, rgb};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 const LEVELS: usize = 16;
 
@@ -69,9 +71,28 @@ fn levels(hue: f64) -> Vec<String> {
         .collect()
 }
 
+thread_local! {
+    static LUT: RefCell<Option<(u64, Rc<Vec<String>>)>> = const { RefCell::new(None) };
+}
+
+/// Tabla de colores del logo: se calcula una vez por tono y se reutiliza en cada fotograma.
+fn cached_levels(hue: f64) -> Rc<Vec<String>> {
+    LUT.with(|c| {
+        let mut slot = c.borrow_mut();
+        if let Some((bits, lut)) = slot.as_ref() {
+            if *bits == hue.to_bits() {
+                return Rc::clone(lut);
+            }
+        }
+        let lut = Rc::new(levels(hue));
+        *slot = Some((hue.to_bits(), Rc::clone(&lut)));
+        lut
+    })
+}
+
 pub fn frame(logo: &Logo, phase: f64) -> Vec<String> {
     let w = width(logo);
-    let lut = levels(logo.hue);
+    let lut = cached_levels(logo.hue);
     logo.lines
         .iter()
         .enumerate()
@@ -166,6 +187,15 @@ mod tests {
         let lut = levels(200.0);
         assert_eq!(lut.len(), LEVELS);
         assert!((1..=LEVELS).contains(&transitions(&lut)));
+    }
+
+    #[test]
+    fn the_color_table_is_reused_for_the_same_hue() {
+        let a = cached_levels(120.0);
+        let b = cached_levels(120.0);
+        assert!(Rc::ptr_eq(&a, &b));
+        let c = cached_levels(300.0);
+        assert!(!Rc::ptr_eq(&a, &c));
     }
 
     #[test]

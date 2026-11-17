@@ -31,6 +31,10 @@ die() {
     exit 1
 }
 
+warn() {
+    echo "Aviso: $*" >&2
+}
+
 UNINSTALL=0
 LOCAL_INSTALL=0
 INSTALL_DIR=""
@@ -69,23 +73,49 @@ case "$INSTALL_DIR" in
 esac
 
 MAN_DIR=""
-if [ "$(basename "$INSTALL_DIR")" = "bin" ]; then
-    MAN_DIR="$(dirname "$INSTALL_DIR")/share/man/man1"
-fi
+set_man_dir() {
+    MAN_DIR=""
+    if [ "$(basename "$INSTALL_DIR")" = "bin" ]; then
+        MAN_DIR="$(dirname "$INSTALL_DIR")/share/man/man1"
+    fi
+}
+set_man_dir
+
+is_system_dir() {
+    [ "$INSTALL_DIR" = "/usr/local/bin" ] || [ "$INSTALL_DIR" = "/usr/bin" ]
+}
+
+# ¿Se puede usar sudo? Si hace falta contraseña la pide en la terminal; falla si no hay
+# permisos o no hay terminal (contenedores, CI).
+sudo_works() {
+    command -v sudo >/dev/null 2>&1 && sudo -v 2>/dev/null
+}
+
+# Ejecuta con sudo solo si NEED_SUDO=1.
+NEED_SUDO=0
+priv() {
+    if [ "$NEED_SUDO" -eq 1 ]; then
+        sudo "$@"
+    else
+        "$@"
+    fi
+}
 
 if [ "$UNINSTALL" -eq 1 ]; then
     echo "Desinstalando $BIN_NAME de $INSTALL_DIR..."
-    if [ "$INSTALL_DIR" = "/usr/local/bin" ] || [ "$INSTALL_DIR" = "/usr/bin" ]; then
-        if command -v sudo >/dev/null 2>&1; then
-            sudo rm -f -- "$INSTALL_DIR/$BIN_NAME"
-            [ -n "$MAN_DIR" ] && sudo rm -f -- "$MAN_DIR/$BIN_NAME.1"
-        else
-            rm -f -- "$INSTALL_DIR/$BIN_NAME" 2>/dev/null || die "no se pudo desinstalar (necesitas sudo)"
-            [ -n "$MAN_DIR" ] && rm -f -- "$MAN_DIR/$BIN_NAME.1" 2>/dev/null || true
-        fi
-    else
-        rm -f -- "$INSTALL_DIR/$BIN_NAME"
-        [ -n "$MAN_DIR" ] && rm -f -- "$MAN_DIR/$BIN_NAME.1"
+    if is_system_dir && [ ! -w "$INSTALL_DIR" ]; then
+        sudo_works || die "no se pudo desinstalar: necesitas permisos de administrador (usa sudo)"
+        NEED_SUDO=1
+    fi
+    priv rm -f -- "$INSTALL_DIR/$BIN_NAME" || die "no se pudo borrar $INSTALL_DIR/$BIN_NAME (permisos)"
+    if [ -n "$MAN_DIR" ]; then
+        priv rm -f -- "$MAN_DIR/$BIN_NAME.1" || warn "no se pudo borrar la página de manual"
+    fi
+    if [ -n "${XDG_CACHE_HOME:-}" ] || [ -n "${HOME:-}" ]; then
+        CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/$BIN_NAME"
+        case "$CACHE_DIR" in
+            /?*/"$BIN_NAME") rm -rf -- "$CACHE_DIR" 2>/dev/null || true ;;
+        esac
     fi
     echo "Desinstalado con éxito."
     exit 0
@@ -97,14 +127,21 @@ case "$ATTEST" in
     *) die "RSI_VERIFY_ATTESTATION debe ser auto, 0 o 1" ;;
 esac
 
-command -v curl >/dev/null 2>&1 || die "se necesita curl"
-command -v tar >/dev/null 2>&1 || die "se necesita tar"
+# Descargador: curl, o wget si no hay curl (Alpine y Debian mínimos suelen venir sin curl).
+if command -v curl >/dev/null 2>&1; then
+    DOWNLOADER=curl
+elif command -v wget >/dev/null 2>&1; then
+    DOWNLOADER=wget
+else
+    die "se necesita curl o wget (p. ej.: sudo apt install curl | sudo dnf install curl | sudo apk add curl)"
+fi
+command -v tar >/dev/null 2>&1 || die "se necesita tar (p. ej.: sudo apt install tar | sudo dnf install tar | sudo apk add tar)"
 
 ARCH=$(uname -m)
 case "$ARCH" in
-    x86_64) TARGET="x86_64-unknown-linux-musl" ;;
+    x86_64 | amd64) TARGET="x86_64-unknown-linux-musl" ;;
     aarch64 | arm64) TARGET="aarch64-unknown-linux-musl" ;;
-    *) die "arquitectura no soportada ($ARCH)." ;;
+    *) die "arquitectura no soportada ($ARCH). Hay binarios para x86_64 y aarch64; en otras, compila con: cargo install --git https://github.com/$REPO" ;;
 esac
 
 ASSET_NAME="${BIN_NAME}-${TARGET}.tar.gz"
@@ -125,16 +162,21 @@ sha_check() {
     elif command -v shasum >/dev/null 2>&1; then
         shasum -a 256 -c "$1" >/dev/null 2>&1
     else
-        die "se necesita sha256sum o shasum para verificar la descarga"
+        die "se necesita sha256sum o shasum para verificar la descarga (paquete coreutils)"
     fi
 }
 
 fetch() {
-    curl --proto '=https' --tlsv1.2 -fsSL --retry 3 --connect-timeout 15 --max-time 120 "$1" -o "$2"
+    if [ "$DOWNLOADER" = curl ]; then
+        curl --proto '=https' --tlsv1.2 -fsSL --retry 3 --connect-timeout 15 --max-time 120 "$1" -o "$2"
+    else
+        wget -q -O "$2" "$1"
+    fi
 }
 
-TMP_DIR=$(mktemp -d)
-trap 'rm -rf "$TMP_DIR"' EXIT INT TERM HUP
+TMP_DIR=$(mktemp -d) || die "no se pudo crear un directorio temporal"
+trap 'rm -rf "$TMP_DIR"' EXIT
+trap 'exit 1' INT TERM HUP
 
 echo "Descargando $ASSET_NAME..."
 fetch "$BASE_URL/$ASSET_NAME" "$TMP_DIR/$ASSET_NAME" || die "no se pudo descargar $ASSET_NAME"
@@ -157,7 +199,7 @@ case "$ATTEST" in
         if command -v gh >/dev/null 2>&1; then
             echo "Verificando procedencia (attestation)..."
             if ! verify_attestation 2>/dev/null; then
-                echo "Aviso: no se pudo verificar la procedencia (¿gh sin autenticar?); el SHA256 sí coincide." >&2
+                warn "no se pudo verificar la procedencia (¿gh sin autenticar?); el SHA256 sí coincide."
                 echo "       Usa RSI_VERIFY_ATTESTATION=1 para exigirla." >&2
             fi
         fi
@@ -171,75 +213,72 @@ if [ ! -f "$TMP_DIR/extract/$BIN_NAME" ] || [ -L "$TMP_DIR/extract/$BIN_NAME" ];
     die "el paquete no contiene el binario $BIN_NAME"
 fi
 
-NEED_SUDO=0
-if [ "$INSTALL_DIR" = "/usr/local/bin" ] || [ "$INSTALL_DIR" = "/usr/bin" ]; then
-    if [ ! -w "$INSTALL_DIR" ]; then
-        if command -v sudo >/dev/null 2>&1; then
-            NEED_SUDO=1
-            echo "Se requiere sudo para instalar en $INSTALL_DIR"
-        else
-            echo "Aviso: no hay permisos para escribir en $INSTALL_DIR y sudo no está disponible." >&2
-            echo "       Instalando en \$HOME/.local/bin en su lugar." >&2
-            INSTALL_DIR="$HOME/.local/bin"
-            if [ "$(basename "$INSTALL_DIR")" = "bin" ]; then
-                MAN_DIR="$(dirname "$INSTALL_DIR")/share/man/man1"
-            fi
-            NEED_SUDO=0
-        fi
+if is_system_dir && [ ! -w "$INSTALL_DIR" ]; then
+    if sudo_works; then
+        NEED_SUDO=1
+        echo "Se requiere sudo para instalar en $INSTALL_DIR"
+    else
+        [ -n "${HOME:-}" ] || die "no hay permisos en $INSTALL_DIR, sudo no está disponible y HOME no está definido; indica un directorio de destino"
+        warn "no se puede escribir en $INSTALL_DIR (sin permisos o sin sudo utilizable)."
+        echo "       Instalando en \$HOME/.local/bin en su lugar." >&2
+        INSTALL_DIR="$HOME/.local/bin"
+        set_man_dir
     fi
 fi
 
-mkdir -p "$INSTALL_DIR" 2>/dev/null || {
-    if [ "$NEED_SUDO" -eq 1 ]; then
-        sudo mkdir -p "$INSTALL_DIR"
-    else
-        die "no se pudo crear $INSTALL_DIR"
-    fi
-}
+priv mkdir -p "$INSTALL_DIR" || die "no se pudo crear $INSTALL_DIR"
 
 echo "Instalando en $INSTALL_DIR/$BIN_NAME..."
-
-if [ "$NEED_SUDO" -eq 1 ]; then
-    sudo install -m 755 "$TMP_DIR/extract/$BIN_NAME" "$INSTALL_DIR/.$BIN_NAME.new.$$"
-    sudo mv -f "$INSTALL_DIR/.$BIN_NAME.new.$$" "$INSTALL_DIR/$BIN_NAME"
-else
-    install -m 755 "$TMP_DIR/extract/$BIN_NAME" "$INSTALL_DIR/.$BIN_NAME.new.$$"
-    mv -f "$INSTALL_DIR/.$BIN_NAME.new.$$" "$INSTALL_DIR/$BIN_NAME"
+TMP_BIN="$INSTALL_DIR/.$BIN_NAME.new.$$"
+if ! priv install -m 755 "$TMP_DIR/extract/$BIN_NAME" "$TMP_BIN" ||
+    ! priv mv -f "$TMP_BIN" "$INSTALL_DIR/$BIN_NAME"; then
+    priv rm -f -- "$TMP_BIN" 2>/dev/null || true
+    die "no se pudo instalar en $INSTALL_DIR"
 fi
 
 if [ -n "$MAN_DIR" ] && [ -f "$TMP_DIR/extract/$BIN_NAME.1" ]; then
-    if [ "$NEED_SUDO" -eq 1 ]; then
-        if sudo mkdir -p "$MAN_DIR" && sudo install -m 644 "$TMP_DIR/extract/$BIN_NAME.1" "$MAN_DIR/$BIN_NAME.1"; then
-            echo "Página de manual instalada en $MAN_DIR/$BIN_NAME.1"
-        else
-            echo "Aviso: no se pudo instalar la página de manual." >&2
-        fi
+    if priv mkdir -p "$MAN_DIR" && priv install -m 644 "$TMP_DIR/extract/$BIN_NAME.1" "$MAN_DIR/$BIN_NAME.1"; then
+        echo "Página de manual instalada en $MAN_DIR/$BIN_NAME.1"
     else
-        if mkdir -p "$MAN_DIR" && install -m 644 "$TMP_DIR/extract/$BIN_NAME.1" "$MAN_DIR/$BIN_NAME.1"; then
-            echo "Página de manual instalada en $MAN_DIR/$BIN_NAME.1"
-        else
-            echo "Aviso: no se pudo instalar la página de manual." >&2
-        fi
+        warn "no se pudo instalar la página de manual."
     fi
 fi
 
-echo "¡Instalación exitosa!"
+# Comprobación real: el binario se ejecuta (detecta noexec, arquitectura equivocada, etc.).
+if ! VERSION_OUT=$("$INSTALL_DIR/$BIN_NAME" --version 2>&1); then
+    echo "Error: se instaló $INSTALL_DIR/$BIN_NAME pero no se puede ejecutar:" >&2
+    echo "       $VERSION_OUT" >&2
+    echo "       Comprueba que el destino no está montado con noexec y que la arquitectura ($ARCH) es la correcta." >&2
+    exit 1
+fi
 
-if [ "$INSTALL_DIR" != "/usr/local/bin" ] && [ "$INSTALL_DIR" != "/usr/bin" ]; then
-    case ":${PATH:-}:" in
-        *":$INSTALL_DIR:"*)
-            echo "Ejecuta: $BIN_NAME"
+echo "¡Instalación exitosa! ($VERSION_OUT)"
+
+# ¿Qué ejecutará el usuario al escribir «rsi»?
+FOUND=$(command -v "$BIN_NAME" 2>/dev/null || true)
+if [ "$FOUND" = "$INSTALL_DIR/$BIN_NAME" ]; then
+    echo "Ejecuta: $BIN_NAME"
+elif [ -n "$FOUND" ]; then
+    warn "al escribir '$BIN_NAME' se ejecutará otro programa: $FOUND"
+    echo "       Para usar el recién instalado: $INSTALL_DIR/$BIN_NAME" >&2
+    echo "       (o pon $INSTALL_DIR antes en tu PATH, o borra el otro)." >&2
+else
+    echo ""
+    case "$(basename "${SHELL:-sh}")" in
+        fish)
+            echo "'$BIN_NAME' aún no está en tu PATH. Para añadirlo de forma permanente:"
+            echo "  fish_add_path \"$INSTALL_DIR\""
+            ;;
+        zsh)
+            echo "'$BIN_NAME' aún no está en tu PATH. Para añadirlo de forma permanente:"
+            echo "  echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> ~/.zshrc"
             ;;
         *)
-            echo ""
-            echo "Para usar '$BIN_NAME' directamente, cierra y abre la terminal"
-            echo "o ejecuta: export PATH=\"$INSTALL_DIR:\$PATH\""
-            echo ""
-            echo "Para hacerlo permanente: echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc"
-            echo ""
-            echo "Ejecuta ahora con: $INSTALL_DIR/$BIN_NAME"
+            echo "'$BIN_NAME' aún no está en tu PATH. Para añadirlo de forma permanente:"
+            echo "  echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> ~/.bashrc"
             ;;
     esac
-else
-    echo "Ejecuta: $BIN_NAME"
+    echo ""
+    echo "Abre una terminal nueva, o ejecuta ahora con: $INSTALL_DIR/$BIN_NAME"
+    echo "(Si el sistema sugiere 'sudo apt install rsi', ignóralo: es otro paquete.)"
 fi

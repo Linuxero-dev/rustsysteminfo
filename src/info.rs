@@ -804,7 +804,8 @@ fn battery() -> Option<String> {
 fn packages_fp() -> String {
     let home = var("HOME").unwrap_or_default();
     let user_flatpak = format!("{home}/.local/share/flatpak/app");
-    cache::fingerprint(&[
+    let nix_profile = format!("{home}/.nix-profile");
+    let mut fp = cache::fingerprint(&[
         "/usr/lib/sysimage/rpm/rpmdb.sqlite",
         "/usr/lib/sysimage/rpm/rpmdb.sqlite-wal",
         "/var/lib/rpm/rpmdb.sqlite",
@@ -813,13 +814,16 @@ fn packages_fp() -> String {
         "/var/lib/pacman/local",
         "/lib/apk/db/installed",
         "/var/db/xbps",
-        "/var/db/pkg",
         "/var/log/packages",
         "/var/lib/flatpak/app",
         "/var/lib/snapd/snaps",
         "/run/current-system/sw",
+        "/nix/var/nix/profiles/default",
+        nix_profile.as_str(),
         user_flatpak.as_str(),
-    ])
+    ]);
+    fp.push_str(&cache::fingerprint_children("/var/db/pkg"));
+    fp
 }
 
 fn gpu_fp() -> String {

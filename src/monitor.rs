@@ -9,7 +9,7 @@ use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
-use sysinfo::System;
+use sysinfo::{CpuRefreshKind, System};
 
 /// Velocidad de la ola del logo en radianes por segundo (más bajo = más lenta).
 const WAVE_SPEED: f64 = 3.0;
@@ -103,7 +103,9 @@ impl Monitor {
     }
 
     pub fn sample(&mut self) {
-        self.sys.refresh_cpu();
+        // Solo el uso: la frecuencia por núcleo no se muestra en vivo y cuesta lecturas extra.
+        self.sys
+            .refresh_cpu_specifics(CpuRefreshKind::new().with_cpu_usage());
         self.sys.refresh_memory();
         if self.cpu.len() == HISTORY {
             self.cpu.remove(0);
@@ -297,17 +299,17 @@ pub fn run(
     cache: &mut Cache,
     mut render: impl FnMut(&Monitor, f64, usize, usize) -> Vec<Row>,
 ) {
-    if interactive {
-        // SAFETY: el manejador únicamente escribe un AtomicBool, seguro dentro de una señal.
-        unsafe {
-            for sig in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
-                libc::signal(sig, on_sigterm as *const () as libc::sighandler_t);
-            }
-        }
-    }
     let guard = if interactive { RawGuard::new() } else { None };
     if guard.is_none() {
         return print_once(mon, cache, &mut render);
+    }
+    // Los manejadores se instalan solo si hay modo interactivo real: si falla el modo raw,
+    // se imprime una vez y Ctrl+C conserva su comportamiento por defecto.
+    // SAFETY: el manejador únicamente escribe un AtomicBool, seguro dentro de una señal.
+    unsafe {
+        for sig in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+            libc::signal(sig, on_sigterm as *const () as libc::sighandler_t);
+        }
     }
 
     let mut start = Instant::now();

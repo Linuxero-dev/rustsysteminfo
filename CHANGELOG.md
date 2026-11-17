@@ -1,3 +1,27 @@
+# Cambios
+
+Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
+
+## [0.5.1] - 2026-11-17
+
+### Añadido
+- El instalador comprueba que `rsi` se ejecuta tras instalarlo (`rsi --version`), detecta si queda fuera del PATH o tapado por otro `rsi`, y da la línea exacta para bash, zsh o fish.
+- El instalador usa `wget` cuando no hay `curl`, y explica qué paquete falta si no hay `tar` ni `sha256sum`.
+- La desinstalación también borra la caché de `rsi`.
+
+### Corregido
+- `README.md` y `CHANGELOG.md` habían quedado truncados; se restauran.
+- Ctrl+C durante la instalación interrumpe el instalador en lugar de continuar sin directorio temporal.
+- Si `sudo` existe pero no se puede usar, el instalador cae a `~/.local/bin` en vez de fallar.
+- Caché de paquetes obsoleta en NixOS y Gentoo.
+- Si el modo interactivo no arranca, Ctrl+C conserva su comportamiento normal.
+
+### Rendimiento
+- La tabla de colores del logo se calcula una sola vez, y el monitor refresca solo el uso de CPU.
+
+### Seguridad
+- La caché usa un directorio `0700`, un fichero temporal único `0600` creado en exclusiva.
+
 ## [0.5.0] - 2026-11-17
 
 ### Añadido
@@ -26,6 +50,39 @@
 - El arranque en caliente pasa de ~880 ms a ~30-50 ms gracias a la caché.
 - El modo en vivo repinta solo las filas que cambian y emite menos códigos de
   color: de ~3,2 % de un núcleo y ~250 KiB/s a cerca del 1 % y menos de 80 KiB/s.
-  
+
+## [0.4.2]
+### Corregido
+- El instalador explica cómo ejecutar `rsi` cuando el destino no está en el PATH (caso típico de Ubuntu justo tras instalar).
+### Cambiado
+- La ola del logo es más lenta y suave.
+
+## [0.4.1]
+### Corregido
+- Las líneas más anchas que la terminal ya no pierden los colores al recortarse.
+
+## [0.4.0]
+### Añadido
+- Módulos nuevos: WM, resolución con frecuencia de refresco, versión del shell, temperatura de CPU y VRAM de la GPU. Núcleos/hilos siempre visibles.
+- Fichero de configuración `~/.config/rsi/config` (`hide`, `logo`, `no_logo`, `animate`), con `--config`, `--no-config`, `--show` y `--gen-config`.
+- Salida `--json`.
+- Completado de comandos para bash, zsh y fish (`--completions`).
+- Paleta de 256 colores y ancho real de caracteres (CJK, emojis y acentos combinados).
+- Títulos de sección con línea decorativa.
+- El instalador verifica la procedencia con `gh` cuando está instalado (`RSI_VERIFY_ATTESTATION`).
+
+## [0.3.0]
+### Añadido
+- Opciones `-V/--version`, `--logo`, `--no-logo`, `--list-logos`, `--no-MÓDULO`, `--hide` y `--list-modules`.
+- Módulo de IP local.
+### Corregido
+- El monitor ya no redibuja con cada evento del ratón, lo que disparaba el uso de CPU al girar la rueda.
+
+## [0.2.5]
+### Corregido
+- Restos de líneas al cambiar entre layouts en el monitor en vivo.
+- Bloque de código sin cerrar en el README.
+
+[0.5.1]: https://github.com/Linuxero-dev/rustsysteminfo/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Linuxero-dev/rustsysteminfo/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/Linuxero-dev/rustsysteminfo/releases/tag/v0.4.2
