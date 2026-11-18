@@ -40,6 +40,8 @@ jobs:
       - run: ./target/release/rsi --once
       - name: Probar el instalador
         run: ./scripts/test-install.sh
+      - name: Probar el paquete .deb
+        run: ./scripts/test-deb.sh
       - name: shellcheck
         run: shellcheck install.sh scripts/*.sh
 
@@ -50,7 +52,11 @@ jobs:
     timeout-minutes: 45
     strategy:
       matrix:
-        target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
+        include:
+          - target: x86_64-unknown-linux-musl
+            deb_arch: amd64
+          - target: aarch64-unknown-linux-musl
+            deb_arch: arm64
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -79,6 +85,17 @@ jobs:
             -C "$GITHUB_WORKSPACE/man" rsi.1
           cd dist
           sha256sum "rsi-${{ matrix.target }}.tar.gz" > "rsi-${{ matrix.target }}.tar.gz.sha256"
+      # El completado lo genera el propio binario, así que hace falta uno que se pueda
+      # ejecutar en este equipo (el de aarch64 no se puede): se compila el del host.
+      - name: Compilar el binario del host (solo para generar el completado)
+        run: cargo build --release --locked
+      - name: Crear el paquete .deb
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+          deb="rustsysteminfo_${version}_${{ matrix.deb_arch }}.deb"
+          ./scripts/make-deb.sh "target/${{ matrix.target }}/release/rsi" "${{ matrix.deb_arch }}" "$version" dist target/release/rsi
+          cd dist
+          sha256sum "$deb" > "$deb.sha256"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rsi-${{ matrix.target }}
@@ -101,7 +118,9 @@ jobs:
       # Procedencia verificable: gh attestation verify <fichero> --repo Linuxero-dev/rustsysteminfo
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
-          subject-path: dist/*.tar.gz
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.deb
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: dist/*

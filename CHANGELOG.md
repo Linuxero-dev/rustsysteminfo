@@ -2,6 +2,14 @@
 
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [0.5.2] - 2026-11-17
+
+### Añadido
+- Paquete `.deb` (`amd64` y `arm64`) en cada release, con su SHA256 y su attestation de procedencia. Incluye el binario estático, la página de manual, el completado de bash, zsh y fish y la licencia, y no tiene dependencias.
+- `scripts/make-deb.sh` y `scripts/test-deb.sh`; el CI y `check.sh` comprueban el paquete.
+- El instalador avisa si ya hay un `.deb` de rsi instalado, y el `.deb` avisa si existe una copia en `/usr/local/bin`.
+- README: instalación con `wget` y con `.deb`.
+
 ## [0.5.1] - 2026-11-17
 
 ### Añadido
@@ -83,6 +91,7 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 - Restos de líneas al cambiar entre layouts en el monitor en vivo.
 - Bloque de código sin cerrar en el README.
 
+[0.5.2]: https://github.com/Linuxero-dev/rustsysteminfo/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/Linuxero-dev/rustsysteminfo/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Linuxero-dev/rustsysteminfo/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/Linuxero-dev/rustsysteminfo/releases/tag/v0.4.2

@@ -60,6 +60,12 @@ step "Ejecución: rsi --once" ./target/release/rsi --once >/dev/null
 step "Con la salida redirigida no se emiten secuencias de escape" \
     bash -c '! ./target/release/rsi --once | grep -q $'"'"'\x1b'"'"
 
+if have dpkg-deb; then
+    step "Pruebas del paquete .deb" ./scripts/test-deb.sh
+else
+    warn "dpkg-deb no está instalado: se omiten las pruebas del .deb"
+fi
+
 step "Sintaxis de install.sh" sh -n install.sh
 if have shellcheck; then
     step "shellcheck" shellcheck install.sh scripts/*.sh

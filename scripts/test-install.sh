@@ -63,10 +63,19 @@ exec "$WORK/stub/curl" "\$4" -o "\$3"
 STUB
 chmod +x "$WORK/stub/wget"
 
+# Simula dpkg: "dpkg -s rustsysteminfo" dice que está instalado solo con DPKG_MODE=installed.
+cat >"$WORK/stub/dpkg" <<'STUB'
+#!/bin/sh
+[ "${DPKG_MODE:-none}" = "installed" ]
+STUB
+chmod +x "$WORK/stub/dpkg"
+
 # Simula sudo: "-v" responde según SUDO_V (0 = utilizable); el resto se ejecuta sin elevación.
 cat >"$WORK/stub/sudo" <<'STUB'
 #!/bin/sh
 if [ "${1:-}" = "-v" ]; then exit "${SUDO_V:-0}"; fi
+# SUDO_FAIL=1: cualquier orden elevada falla (así no se escribe nada fuera del entorno de prueba).
+[ -z "${SUDO_FAIL:-}" ] || exit 1
 exec "$@"
 STUB
 chmod +x "$WORK/stub/sudo"
@@ -170,6 +179,15 @@ kill -TERM "$pid" 2>/dev/null
 wait "$pid" 2>/dev/null
 check "una interrupción (TERM) no instala nada" not test -e "$WORK/cwd/interrumpido/rsi"
 check "una interrupción (TERM) limpia el directorio temporal" test -z "$(ls -A "$WORK/tmpd")"
+
+# --- aviso si ya hay un .deb instalado (el instalador global lo taparía) -----------------------
+# Con sudo simulado que falla: el aviso sale antes de escribir nada en /usr/local/bin.
+if [ ! -w /usr/local/bin ]; then
+    SUDO_FAIL=1 DPKG_MODE=installed STUB_MODE=ok install_out
+    check "avisa si ya hay un paquete .deb instalado" grep -q 'paquete .deb' "$WORK/out.txt"
+    SUDO_FAIL=1 DPKG_MODE=none STUB_MODE=ok install_out
+    check "no avisa del .deb si no está instalado" not grep -q 'paquete .deb' "$WORK/out.txt"
+fi
 
 # --- la desinstalación borra la caché ------------------------------------------------------
 mkdir -p "$WORK/cache/rsi"
