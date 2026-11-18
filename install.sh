@@ -226,11 +226,19 @@ if is_system_dir && [ ! -w "$INSTALL_DIR" ]; then
     fi
 fi
 
-# Si ya hay un paquete .deb de rsi, la copia nueva en /usr/local/bin lo tapará.
-if [ "$INSTALL_DIR" = "/usr/local/bin" ] && command -v dpkg >/dev/null 2>&1 && dpkg -s rustsysteminfo >/dev/null 2>&1; then
-    warn "ya hay un paquete .deb de rsi instalado (rustsysteminfo, en /usr/bin)."
-    echo "       Esta instalación, en /usr/local/bin, tendrá prioridad sobre él." >&2
-    echo "       Para quedarte con una sola copia: sudo apt remove rustsysteminfo" >&2
+# Si ya hay un paquete de rsi (.deb o .rpm), la copia nueva en /usr/local/bin lo tapará.
+if [ "$INSTALL_DIR" = "/usr/local/bin" ]; then
+    PKG_REMOVE=""
+    if command -v dpkg >/dev/null 2>&1 && dpkg -s rustsysteminfo >/dev/null 2>&1; then
+        PKG_REMOVE="sudo apt remove rustsysteminfo"
+    elif command -v rpm >/dev/null 2>&1 && rpm -q rustsysteminfo >/dev/null 2>&1; then
+        PKG_REMOVE="sudo dnf remove rustsysteminfo (o: sudo zypper remove rustsysteminfo)"
+    fi
+    if [ -n "$PKG_REMOVE" ]; then
+        warn "ya hay un paquete de rsi instalado (rustsysteminfo, en /usr/bin)."
+        echo "       Esta instalación, en /usr/local/bin, tendrá prioridad sobre él." >&2
+        echo "       Para quedarte con una sola copia: $PKG_REMOVE" >&2
+    fi
 fi
 
 priv mkdir -p "$INSTALL_DIR" || die "no se pudo crear $INSTALL_DIR"

@@ -70,6 +70,13 @@ cat >"$WORK/stub/dpkg" <<'STUB'
 STUB
 chmod +x "$WORK/stub/dpkg"
 
+# Simula rpm: "rpm -q rustsysteminfo" dice que está instalado solo con RPM_MODE=installed.
+cat >"$WORK/stub/rpm" <<'STUB'
+#!/bin/sh
+[ "${RPM_MODE:-none}" = "installed" ]
+STUB
+chmod +x "$WORK/stub/rpm"
+
 # Simula sudo: "-v" responde según SUDO_V (0 = utilizable); el resto se ejecuta sin elevación.
 cat >"$WORK/stub/sudo" <<'STUB'
 #!/bin/sh
@@ -180,13 +187,15 @@ wait "$pid" 2>/dev/null
 check "una interrupción (TERM) no instala nada" not test -e "$WORK/cwd/interrumpido/rsi"
 check "una interrupción (TERM) limpia el directorio temporal" test -z "$(ls -A "$WORK/tmpd")"
 
-# --- aviso si ya hay un .deb instalado (el instalador global lo taparía) -----------------------
+# --- aviso si ya hay un .deb o .rpm instalado (el instalador global lo taparía) -----------------------
 # Con sudo simulado que falla: el aviso sale antes de escribir nada en /usr/local/bin.
 if [ ! -w /usr/local/bin ]; then
     SUDO_FAIL=1 DPKG_MODE=installed STUB_MODE=ok install_out
-    check "avisa si ya hay un paquete .deb instalado" grep -q 'paquete .deb' "$WORK/out.txt"
-    SUDO_FAIL=1 DPKG_MODE=none STUB_MODE=ok install_out
-    check "no avisa del .deb si no está instalado" not grep -q 'paquete .deb' "$WORK/out.txt"
+    check "avisa si ya hay un paquete .deb instalado" grep -q 'apt remove' "$WORK/out.txt"
+    SUDO_FAIL=1 RPM_MODE=installed STUB_MODE=ok install_out
+    check "avisa si ya hay un paquete .rpm instalado" grep -q 'dnf remove' "$WORK/out.txt"
+    SUDO_FAIL=1 DPKG_MODE=none RPM_MODE=none STUB_MODE=ok install_out
+    check "no avisa de paquetes si no hay ninguno instalado" not grep -q 'paquete de rsi' "$WORK/out.txt"
 fi
 
 # --- la desinstalación borra la caché ------------------------------------------------------

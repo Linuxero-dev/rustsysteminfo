@@ -66,6 +66,12 @@ else
     warn "dpkg-deb no está instalado: se omiten las pruebas del .deb"
 fi
 
+if have rpmbuild && have rpm; then
+    step "Pruebas del paquete .rpm" ./scripts/test-rpm.sh
+else
+    warn "rpm/rpmbuild no están instalados: se omiten las pruebas del .rpm (sudo apt install rpm)"
+fi
+
 step "Sintaxis de install.sh" sh -n install.sh
 if have shellcheck; then
     step "shellcheck" shellcheck install.sh scripts/*.sh

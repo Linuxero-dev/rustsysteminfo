@@ -21,6 +21,6 @@ por defecto): si no se puede verificar, avisa y continúa, porque el SHA256 ya
 coincide. Con `RSI_VERIFY_ATTESTATION=1` la verificación es obligatoria y la
 instalación falla si no se completa; con `0` se omite.
 
-Los paquetes `.deb` se publican igual: cada uno con su `.sha256` y su *attestation*
+Los paquetes `.deb` y `.rpm` se publican igual: cada uno con su `.sha256` y su *attestation*
 (`gh attestation verify rustsysteminfo_<versión>_amd64.deb --repo Linuxero-dev/rustsysteminfo`).
-El paquete no ejecuta nada al instalarse salvo un aviso informativo (`postinst`).
+Los paquetes no ejecutan nada al instalarse salvo un aviso informativo (`postinst` / `%post`).

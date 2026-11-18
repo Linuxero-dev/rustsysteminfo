@@ -24,10 +24,15 @@ Una alternativa moderna a Neofetch y Fastfetch.
 - **Seguro por diseño**: el instalador verifica el SHA256 y la procedencia, y rsi limpia de secuencias de escape todo texto que lee del sistema.
 - **Se ve bien en cualquier terminal**: truecolor, 256 colores o 16, con `NO_COLOR` respetado y ancho correcto para CJK y emojis.
 
+## Novedades en 0.5.3
+
+- **Paquete `.rpm`** para Fedora, openSUSE y derivadas (`x86_64` y `aarch64`).
+- Cada release se prueba instalando los paquetes en Ubuntu, Debian, Fedora y openSUSE.
+
 ## Novedades en 0.5.2
 
 - **Paquete `.deb`** para Debian, Ubuntu, Pop!_OS, Mint y derivadas (`amd64` y `arm64`), publicado en cada release con su SHA256 y su procedencia.
-- El instalador avisa si ya tienes el `.deb` instalado, para que no queden dos copias.
+- El instalador avisa si ya tienes el paquete instalado, para que no queden dos copias.
 
 ## Novedades en 0.5.1
 
@@ -67,7 +72,7 @@ Otras formas:
 curl -sSL https://raw.githubusercontent.com/Linuxero-dev/rustsysteminfo/main/install.sh | sh -s -- --local
 
 # una versión concreta
-curl -sSL https://raw.githubusercontent.com/Linuxero-dev/rustsysteminfo/main/install.sh | RSI_VERSION=v0.5.2 sh
+curl -sSL https://raw.githubusercontent.com/Linuxero-dev/rustsysteminfo/main/install.sh | RSI_VERSION=v0.5.3 sh
 
 # desinstalar
 curl -sSL https://raw.githubusercontent.com/Linuxero-dev/rustsysteminfo/main/install.sh | sh -s -- --uninstall
@@ -80,12 +85,26 @@ El instalador comprueba siempre el SHA256 y, si tienes la CLI `gh`, también la 
 Descarga el `.deb` de tu arquitectura desde [Releases](https://github.com/Linuxero-dev/rustsysteminfo/releases/latest) (`amd64` para PCs normales, `arm64` para ARM) e instálalo con `apt`, que resuelve todo y permite desinstalar con `sudo apt remove rustsysteminfo`:
 
 ```sh
-sudo apt install ./rustsysteminfo_0.5.2_amd64.deb
+sudo apt install ./rustsysteminfo_0.5.3_amd64.deb
 ```
 
 Instala `rsi` en `/usr/bin`, con la página de manual y el completado de bash, zsh y fish. Es estático: no depende de ningún otro paquete.
 
-> **Usa un solo método.** El script (`curl`) instala en `/usr/local/bin`, que tiene prioridad sobre `/usr/bin`. Si usas ambos acabarás ejecutando la copia del script. Para quedarte con el `.deb`: `sudo rm /usr/local/bin/rsi`.
+### Paquete `.rpm` (Fedora, openSUSE…)
+
+Descarga el `.rpm` de tu arquitectura desde [Releases](https://github.com/Linuxero-dev/rustsysteminfo/releases/latest) (`x86_64` o `aarch64`):
+
+```sh
+# Fedora, RHEL y derivadas
+sudo dnf install ./rustsysteminfo-0.5.3-1.x86_64.rpm
+
+# openSUSE
+sudo zypper install --allow-unsigned-rpm ./rustsysteminfo-0.5.3-1.x86_64.rpm
+```
+
+Se desinstala con `sudo dnf remove rustsysteminfo` o `sudo zypper remove rustsysteminfo`.
+
+> **Usa un solo método.** El script (`curl`) instala en `/usr/local/bin`, que tiene prioridad sobre `/usr/bin`. Si usas ambos acabarás ejecutando la copia del script. Para quedarte con el paquete: `sudo rm /usr/local/bin/rsi`.
 
 Si no tienes `curl`, el instalador funciona igual con `wget`:
 

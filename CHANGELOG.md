@@ -2,6 +2,16 @@
 
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [0.5.3] - 2026-11-17
+
+### Añadido
+- Paquete `.rpm` (`x86_64` y `aarch64`) en cada release, con su SHA256 y su attestation. Mismo contenido que el `.deb` y sin dependencias.
+- `scripts/make-rpm.sh`, `scripts/test-rpm.sh` y `packaging/rustsysteminfo.spec`.
+- `scripts/smoke-containers.sh`: instala los paquetes en contenedores (Ubuntu 22.04 y 24.04, Debian 12, Fedora y openSUSE Tumbleweed) y comprueba que `rsi` responde. El CI prueba el `.rpm` en cada push y todos los paquetes antes de publicar un release.
+
+### Cambiado
+- El instalador avisa también si hay un `.rpm` instalado (antes solo detectaba el `.deb`).
+
 ## [0.5.2] - 2026-11-17
 
 ### Añadido
@@ -91,6 +101,7 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 - Restos de líneas al cambiar entre layouts en el monitor en vivo.
 - Bloque de código sin cerrar en el README.
 
+[0.5.3]: https://github.com/Linuxero-dev/rustsysteminfo/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/Linuxero-dev/rustsysteminfo/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/Linuxero-dev/rustsysteminfo/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Linuxero-dev/rustsysteminfo/compare/v0.4.2...v0.5.0

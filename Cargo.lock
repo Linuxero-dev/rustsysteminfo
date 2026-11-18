@@ -188,7 +188,7 @@ dependencies = [
 
 [[package]]
 name = "rustsysteminfo"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "crossterm",
  "libc",
