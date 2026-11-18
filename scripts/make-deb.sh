@@ -20,7 +20,7 @@ usage() {
     exit 2
 }
 
-[ $# -ge 4 ] && [ $# -le 5 ] || usage
+if [ "$#" -lt 4 ] || [ "$#" -gt 5 ]; then usage; fi
 BIN=$1
 ARCH=$2
 VERSION=$3

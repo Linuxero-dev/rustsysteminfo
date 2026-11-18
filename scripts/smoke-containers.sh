@@ -32,13 +32,13 @@ smoke() {
 
 if [ "$KIND" = deb ] || [ "$KIND" = all ]; then
     for image in "${DEB_IMAGES[@]}"; do
-        smoke "$image" 'apt-get install -y /pkg/*_$(dpkg --print-architecture).deb >/dev/null'
+        smoke "$image" "apt-get install -y /pkg/*_\$(dpkg --print-architecture).deb >/dev/null"
     done
 fi
 
 if [ "$KIND" = rpm ] || [ "$KIND" = all ]; then
-    smoke fedora:latest 'dnf install -y /pkg/*.$(uname -m).rpm >/dev/null'
-    smoke opensuse/tumbleweed 'rpm -i --nosignature /pkg/*.$(uname -m).rpm'
+    smoke fedora:latest "dnf install -y /pkg/*.\$(uname -m).rpm >/dev/null"
+    smoke opensuse/tumbleweed "rpm -i --nosignature /pkg/*.\$(uname -m).rpm"
 fi
 
 if [ "$fails" -ne 0 ]; then
