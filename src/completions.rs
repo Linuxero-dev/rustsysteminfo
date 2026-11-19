@@ -14,6 +14,7 @@ const FLAGS: &[(&str, &str)] = &[
     ("list-logos", "lista los logos"),
     ("list-modules", "lista los modulos"),
     ("gen-config", "imprime una configuracion de ejemplo"),
+    ("report", "imprime un informe para adjuntar a un issue"),
     ("no-config", "ignora el fichero de configuracion"),
 ];
 

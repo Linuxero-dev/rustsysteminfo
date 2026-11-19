@@ -1,6 +1,7 @@
 use crate::cache::{self, Cache};
 use crate::ui::{clean, human};
-use std::collections::HashSet;
+use crate::{pkgver, proctree};
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -20,6 +21,8 @@ const TRUSTED_BIN_DIRS: &[&str] = &[
 ];
 
 const MAX_OUTPUT: u64 = 16 * 1024 * 1024;
+/// Plazo para consultar bases de paquetes grandes (rpm, Nix) en discos lentos.
+const SLOW_DB: Duration = Duration::from_secs(8);
 
 /// Identificadores de módulo que se pueden ocultar con `--no-<módulo>` o `--hide`.
 pub const MODULES: &[&str] = &[
@@ -69,11 +72,11 @@ pub struct Info {
 
 type Theme = [Option<String>; 3];
 
-fn var(k: &str) -> Option<String> {
+pub(crate) fn var(k: &str) -> Option<String> {
     env::var(k).ok().filter(|v| !v.is_empty())
 }
 
-fn read(p: impl AsRef<Path>) -> Option<String> {
+pub(crate) fn read(p: impl AsRef<Path>) -> Option<String> {
     let s = fs::read_to_string(p).ok()?;
     let s = s.trim_matches(|c: char| c.is_whitespace() || c == '\0');
     (!s.is_empty()).then(|| s.to_string())
@@ -95,7 +98,13 @@ fn find_bin(bin: &str) -> Option<PathBuf> {
     }
 }
 
-fn run(bin: &str, args: &[&str]) -> Option<String> {
+pub(crate) fn run(bin: &str, args: &[&str]) -> Option<String> {
+    run_with(bin, args, Duration::from_secs(2), true)
+}
+
+/// `limit` para bases de paquetes grandes; `need_ok = false` acepta códigos de
+/// salida distintos de cero (p. ej. `rpm -q` con paquetes que no están).
+fn run_with(bin: &str, args: &[&str], limit: Duration, need_ok: bool) -> Option<String> {
     let mut child = Command::new(find_bin(bin)?)
         .args(args)
         .stdin(Stdio::null())
@@ -112,7 +121,6 @@ fn run(bin: &str, args: &[&str]) -> Option<String> {
         let _ = tx.send(buf);
     });
 
-    let limit = Duration::from_secs(2);
     let start = Instant::now();
     let status = loop {
         match child.try_wait() {
@@ -127,9 +135,7 @@ fn run(bin: &str, args: &[&str]) -> Option<String> {
     };
 
     let buf = rx.recv_timeout(Duration::from_millis(500)).ok()?;
-    status
-        .success()
-        .then(|| String::from_utf8_lossy(&buf).into_owned())
+    (status.success() || !need_ok).then(|| String::from_utf8_lossy(&buf).into_owned())
 }
 
 fn count_dir(path: &str) -> usize {
@@ -270,9 +276,11 @@ fn packages() -> Option<String> {
             .count()
     });
     let nix = if Path::new("/run/current-system/sw").exists() {
-        lines(run(
+        lines(run_with(
             "nix-store",
             &["-q", "--requisites", "/run/current-system/sw"],
+            SLOW_DB,
+            true,
         ))
     } else {
         0
@@ -281,7 +289,7 @@ fn packages() -> Option<String> {
         (
             "rpm",
             if has_rpm_db {
-                lines(run("rpm", &["-qa", "--qf", "x\n"]))
+                lines(run_with("rpm", &["-qa", "--qf", "x\n"], SLOW_DB, true))
             } else {
                 0
             },
@@ -352,7 +360,7 @@ fn shell() -> Option<String> {
     })
 }
 
-fn terminal() -> Option<String> {
+fn terminal(versions: &HashMap<String, String>) -> Option<String> {
     if let Some(p) = var("TERM_PROGRAM") {
         return Some(match var("TERM_PROGRAM_VERSION") {
             Some(v) => format!("{p} {v}"),
@@ -377,18 +385,24 @@ fn terminal() -> Option<String> {
         ("TILIX_ID", "Tilix"),
         ("VTE_VERSION", "VTE"),
     ];
-    KNOWN
-        .iter()
-        .find(|(k, _)| var(k).is_some())
-        .map(|(_, n)| n.to_string())
-        .or_else(|| var("TERM"))
+    if let Some((_, n)) = KNOWN.iter().find(|(k, _)| var(k).is_some()) {
+        return Some(n.to_string());
+    }
+    if let Some(t) = proctree::find_terminal(Path::new("/proc"), std::process::id()) {
+        let ver = t.2.iter().find_map(|p| versions.get(*p));
+        return Some(match ver {
+            Some(v) => format!("{} {v}", t.1),
+            None => t.1.to_string(),
+        });
+    }
+    var("TERM")
 }
 
 fn locale() -> Option<String> {
     ["LC_ALL", "LC_MESSAGES", "LANG"].into_iter().find_map(var)
 }
 
-fn desktop() -> Option<String> {
+fn desktop(versions: &HashMap<String, String>) -> Option<String> {
     let name = var("XDG_CURRENT_DESKTOP")
         .or_else(|| var("DESKTOP_SESSION"))
         .or_else(|| var("XDG_SESSION_DESKTOP"))?;
@@ -402,6 +416,11 @@ fn desktop() -> Option<String> {
         with_ver("KDE Plasma", "plasmashell")
     } else if name.contains("GNOME") {
         with_ver("GNOME", "gnome-shell")
+    } else if name.to_ascii_uppercase().contains("COSMIC") {
+        match versions.get("cosmic-session") {
+            Some(v) => format!("COSMIC {v}"),
+            None => "COSMIC".to_string(),
+        }
     } else {
         name
     };
@@ -801,6 +820,34 @@ fn battery() -> Option<String> {
         })
 }
 
+/// Versiones de los paquetes de `pkgver::WANTED` (dpkg y pacman desde disco,
+/// rpm solo por nombre). Con el mismo fingerprint que el conteo de paquetes.
+pub(crate) fn pkg_versions() -> HashMap<String, String> {
+    let mut v = HashMap::new();
+    if let Ok(text) = fs::read_to_string("/var/lib/dpkg/status") {
+        v = pkgver::dpkg(&text, pkgver::WANTED);
+    }
+    if v.is_empty() {
+        if let Ok(d) = fs::read_dir("/var/lib/pacman/local") {
+            let names: Vec<String> = d
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect();
+            v = pkgver::pacman(names.iter().map(String::as_str), pkgver::WANTED);
+        }
+    }
+    let has_rpm_db =
+        Path::new("/var/lib/rpm").is_dir() || Path::new("/usr/lib/sysimage/rpm").is_dir();
+    if v.is_empty() && has_rpm_db {
+        let mut args = vec!["-q", "--qf", "%{NAME} %{VERSION}\n"];
+        args.extend(pkgver::WANTED);
+        if let Some(out) = run_with("rpm", &args, SLOW_DB, false) {
+            v = pkgver::rpm(&out, pkgver::WANTED);
+        }
+    }
+    v
+}
+
 fn packages_fp() -> String {
     let home = var("HOME").unwrap_or_default();
     let user_flatpak = format!("{home}/.local/share/flatpak/app");
@@ -848,11 +895,25 @@ fn gpu_fp() -> String {
 
 pub fn gather(sys: &System, hidden: &[String], cache: &mut Cache) -> Info {
     let show = |m: &str| !is_hidden(hidden, m);
-    let pkg_fp = if show("packages") {
+    let need_ver = show("de") || show("terminal");
+    let pkg_fp = if show("packages") || need_ver {
         packages_fp()
     } else {
         String::new()
     };
+    let versions = if need_ver {
+        match cache.hit("pkgver", &pkg_fp) {
+            Some(c) => pkgver::decode(&c),
+            None => {
+                let v = pkg_versions();
+                cache.store("pkgver", &pkg_fp, &pkgver::encode(&v));
+                v
+            }
+        }
+    } else {
+        HashMap::new()
+    };
+    let versions = &versions;
     let gpu_fp = if show("gpu") { gpu_fp() } else { String::new() };
     let pkg_hit = cache.hit("packages", &pkg_fp);
     let gpu_hit = cache.hit("gpu", &gpu_fp);
@@ -865,7 +926,7 @@ pub fn gather(sys: &System, hidden: &[String], cache: &mut Cache) -> Info {
                     .then(|| pkg_hit.clone().or_else(packages))
                     .flatten()
             }),
-            s.spawn(|| show("de").then(desktop).flatten()),
+            s.spawn(|| show("de").then(|| desktop(versions)).flatten()),
             s.spawn(|| show("gpu").then(|| gpu_hit.clone().or_else(gpus)).flatten()),
             s.spawn(|| {
                 if show("theme") || show("icons") || show("font") {
@@ -950,7 +1011,7 @@ pub fn gather(sys: &System, hidden: &[String], cache: &mut Cache) -> Info {
                 (
                     "terminal",
                     "Terminal",
-                    show("terminal").then(terminal).flatten(),
+                    show("terminal").then(|| terminal(versions)).flatten(),
                 ),
                 ("locale", "Idioma", show("locale").then(locale).flatten()),
                 ("ip", "IP", ip),

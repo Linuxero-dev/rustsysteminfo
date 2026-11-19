@@ -38,6 +38,8 @@ jobs:
       - run: cargo test --locked
       - run: cargo build --release --locked
       - run: ./target/release/rsi --once
+      - name: Probar que rsi termina solo al perder la terminal
+        run: ./scripts/test-hangup.py target/release/rsi
       - name: Probar el instalador
         run: ./scripts/test-install.sh
       - name: Probar el paquete .deb

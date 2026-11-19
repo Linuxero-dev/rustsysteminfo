@@ -57,6 +57,9 @@ fi
 step "Compilación release" cargo build --release --locked
 step "Ejecución: rsi --help" ./target/release/rsi --help >/dev/null
 step "Ejecución: rsi --once" ./target/release/rsi --once >/dev/null
+if have python3; then
+    step "rsi termina solo al perder la terminal" ./scripts/test-hangup.py target/release/rsi
+fi
 step "Con la salida redirigida no se emiten secuencias de escape" \
     bash -c '! ./target/release/rsi --once | grep -q $'"'"'\x1b'"'"
 

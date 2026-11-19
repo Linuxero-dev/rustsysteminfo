@@ -17,40 +17,14 @@ Una alternativa moderna a Neofetch y Fastfetch.
 ## Por qué rsi
 
 - **En vivo**: CPU, RAM y swap se actualizan en pantalla, con el logo animado.
-- **Completo**: WM, resolución con frecuencia de refresco, temperatura de CPU, VRAM de la GPU, paquetes, shell con versión, discos con barras y más.
+- **Completo**: WM, resolución con frecuencia de refresco, temperatura de CPU, VRAM de la GPU, paquetes, versiones del escritorio, terminal y shell, discos con barras y más.
 - **Configurable**: oculta lo que no quieras (`--no-ip`), fija tus opciones en `~/.config/rsi/config` y elige el logo.
 - **Para scripts**: `--json` imprime todos los datos en JSON.
 - **Sin dependencias en tiempo de ejecución**: un solo binario estático para x86_64 y ARM64.
 - **Seguro por diseño**: el instalador verifica el SHA256 y la procedencia, y rsi limpia de secuencias de escape todo texto que lee del sistema.
 - **Se ve bien en cualquier terminal**: truecolor, 256 colores o 16, con `NO_COLOR` respetado y ancho correcto para CJK y emojis.
 
-## Novedades en 0.5.4
-
-- **Corrección importante:** si cerrabas la terminal (o se caía una sesión SSH) con `rsi` en marcha, el proceso podía quedarse vivo girando al 100 % de un núcleo hasta que lo matabas a mano. Ahora termina solo en ~1 segundo.
-
-## Novedades en 0.5.3
-
-- **Paquete `.rpm`** para Fedora, openSUSE y derivadas (`x86_64` y `aarch64`).
-- Cada release se prueba instalando los paquetes en Ubuntu, Debian, Fedora y openSUSE.
-
-## Novedades en 0.5.2
-
-- **Paquete `.deb`** para Debian, Ubuntu, Pop!_OS, Mint y derivadas (`amd64` y `arm64`), publicado en cada release con su SHA256 y su procedencia.
-- El instalador avisa si ya tienes el paquete instalado, para que no queden dos copias.
-
-## Novedades en 0.5.1
-
-- **Instalador más inteligente**: comprueba que `rsi` se ejecuta tras instalar, detecta si no está en el PATH o si otro `rsi` lo tapa, y da la línea exacta para tu shell (bash, zsh o fish). Usa `wget` si no hay `curl`.
-- **Menos CPU**: la tabla de colores del logo se calcula una vez y el monitor refresca solo el uso de CPU.
-- **Caché privada** (`0700`/`0600`) y huellas correctas para NixOS y Gentoo.
-
-## Novedades en 0.5.0
-
-- **Caché de paquetes y GPU** en `~/.cache/rsi`: el arranque en caliente pasa de ~880 ms a ~30-50 ms.
-- **Corrección crítica de estabilidad**: los procesos huérfanos que consumían un núcleo completo al perder la terminal ahora salen limpiamente.
-- **Recorte con elipsis** (`…`) cuando el texto no cabe en la terminal.
-- **Anchos Unicode correctos** para símbolos (⌚⏰✅❌), emojis (🟠🩷🀄) y banderas.
-- **Paleta de colores visible** con marco gris en lugar de cuadro negro invisible.
+> **Estado: beta.** Funciona a diario, pero Linux tiene miles de combinaciones de hardware y software. Si algo no se detecta, ejecuta `rsi --report` y pega el resultado en un [issue](https://github.com/Linuxero-dev/rustsysteminfo/issues): el informe no incluye usuario, nombre del equipo ni IP. El historial de cambios está en [CHANGELOG.md](CHANGELOG.md).
 
 <details>
 <summary>Más capturas</summary>
@@ -76,7 +50,7 @@ Otras formas:
 curl -sSL https://raw.githubusercontent.com/Linuxero-dev/rustsysteminfo/main/install.sh | sh -s -- --local
 
 # una versión concreta
-curl -sSL https://raw.githubusercontent.com/Linuxero-dev/rustsysteminfo/main/install.sh | RSI_VERSION=v0.5.4 sh
+curl -sSL https://raw.githubusercontent.com/Linuxero-dev/rustsysteminfo/main/install.sh | RSI_VERSION=v0.6.0 sh
 
 # desinstalar
 curl -sSL https://raw.githubusercontent.com/Linuxero-dev/rustsysteminfo/main/install.sh | sh -s -- --uninstall
@@ -89,7 +63,7 @@ El instalador comprueba siempre el SHA256 y, si tienes la CLI `gh`, también la 
 Descarga el `.deb` de tu arquitectura desde [Releases](https://github.com/Linuxero-dev/rustsysteminfo/releases/latest) (`amd64` para PCs normales, `arm64` para ARM) e instálalo con `apt`, que resuelve todo y permite desinstalar con `sudo apt remove rustsysteminfo`:
 
 ```sh
-sudo apt install ./rustsysteminfo_0.5.4_amd64.deb
+sudo apt install ./rustsysteminfo_0.6.0_amd64.deb
 ```
 
 Instala `rsi` en `/usr/bin`, con la página de manual y el completado de bash, zsh y fish. Es estático: no depende de ningún otro paquete.
@@ -100,10 +74,10 @@ Descarga el `.rpm` de tu arquitectura desde [Releases](https://github.com/Linuxe
 
 ```sh
 # Fedora, RHEL y derivadas
-sudo dnf install ./rustsysteminfo-0.5.4-1.x86_64.rpm
+sudo dnf install ./rustsysteminfo-0.6.0-1.x86_64.rpm
 
 # openSUSE
-sudo zypper install --allow-unsigned-rpm ./rustsysteminfo-0.5.4-1.x86_64.rpm
+sudo zypper install --allow-unsigned-rpm ./rustsysteminfo-0.6.0-1.x86_64.rpm
 ```
 
 Se desinstala con `sudo dnf remove rustsysteminfo` o `sudo zypper remove rustsysteminfo`.
@@ -154,6 +128,7 @@ rsi --no-logo          # sin logo
 | `--list-logos`, `--list-modules` | listan los logos y los módulos disponibles |
 | `--config RUTA`, `--no-config` | usa otro fichero de configuración, o ninguno |
 | `--gen-config` | imprime una configuración de ejemplo |
+| `--report` | imprime un informe de detección para adjuntar a un issue |
 | `--completions SHELL` | imprime el completado para `bash`, `zsh` o `fish` |
 
 Módulos: `os`, `host`, `kernel`, `uptime`, `init`, `processes`, `load`, `packages`, `shell`, `terminal`, `locale`, `ip`, `de`, `wm`, `display`, `theme`, `icons`, `font`, `cpu`, `temp`, `gpu`, `battery`, `disks`, `colors`.
@@ -194,4 +169,5 @@ rsi --completions fish > ~/.config/fish/completions/rsi.fish
 ## Notas
 
 - La temperatura de la CPU se lee de `hwmon`; la VRAM, de sysfs (AMD) o de `nvidia-smi` (NVIDIA), y solo se muestra con una única GPU.
-- La frecuencia de refresco sale del EDID de la pantalla, así que puede faltar en algunos monitores.
+- La frecuencia de refresco sale del EDID de la pantalla (la preferida del monitor, no necesariamente la activa), así que puede diferir o faltar.
+- El terminal se detecta por variables de entorno y, si no hay, por los procesos padre; las versiones salen de la base de paquetes (dpkg, pacman o rpm). Con `sudo` o como root no se usa la caché.

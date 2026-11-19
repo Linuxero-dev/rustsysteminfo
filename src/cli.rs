@@ -29,6 +29,9 @@ Configuración (~/.config/rsi/config):
   --no-config           ignora el fichero de configuración
   --gen-config          imprime una configuración de ejemplo
 
+Diagnóstico:
+  --report              imprime un informe para adjuntar a un issue
+
 Shell:
   --completions SH      imprime el completado para bash, zsh o fish
 
@@ -88,6 +91,7 @@ pub enum Action {
     ListLogos,
     ListModules,
     GenConfig,
+    Report,
     Completions(String),
 }
 
@@ -248,6 +252,7 @@ pub fn parse_args(args: Vec<String>, base: Cli) -> Result<Action, String> {
             "--list-logos" => return Ok(Action::ListLogos),
             "--list-modules" => return Ok(Action::ListModules),
             "--gen-config" => return Ok(Action::GenConfig),
+            "--report" => return Ok(Action::Report),
             "--once" | "--no-live" => cli.once = true,
             "--json" => cli.json = true,
             "--no-anim" | "--static" => cli.animate = false,
@@ -338,6 +343,7 @@ mod tests {
         assert_eq!(parse(&["--list-logos"]), Ok(Action::ListLogos));
         assert_eq!(parse(&["--list-modules"]), Ok(Action::ListModules));
         assert_eq!(parse(&["--gen-config"]), Ok(Action::GenConfig));
+        assert_eq!(parse(&["--report"]), Ok(Action::Report));
         assert_eq!(
             parse(&["--completions", "fish"]),
             Ok(Action::Completions("fish".into()))

@@ -7,6 +7,9 @@ mod info;
 mod json;
 mod logo;
 mod monitor;
+mod pkgver;
+mod proctree;
+mod report;
 mod ui;
 
 use cli::Action;
@@ -198,6 +201,18 @@ fn main() -> ExitCode {
             print_text(cli::SAMPLE_CONFIG);
             return ExitCode::SUCCESS;
         }
+        Ok(Action::Report) => {
+            let sys = System::new_with_specifics(
+                RefreshKind::new()
+                    .with_cpu(CpuRefreshKind::everything())
+                    .with_memory(MemoryRefreshKind::everything()),
+            );
+            let hidden: Vec<String> = ["ip", "host", "disks"].map(String::from).to_vec();
+            let mut store = cache::Cache::load(false);
+            let info = info::gather(&sys, &hidden, &mut store);
+            print_text(&report::render(&info));
+            return ExitCode::SUCCESS;
+        }
         Ok(Action::Completions(shell)) => {
             print_text(&completions::script(&shell).unwrap_or_default());
             return ExitCode::SUCCESS;
@@ -225,7 +240,7 @@ fn main() -> ExitCode {
         rx
     });
 
-    let mut store = cache::Cache::load(!cli.no_cache);
+    let mut store = cache::Cache::load(!cli.no_cache && !running_as_root());
     let info = info::gather(&sys, &cli.hidden, &mut store);
     store.save();
     // None = módulo oculto; Some(None) = tiempo agotado; Some(Some(lista)) = datos.
@@ -301,6 +316,11 @@ fn main() -> ExitCode {
     store.save();
 
     ExitCode::SUCCESS
+}
+
+/// Con sudo o como root no se usa la caché: dejaría ficheros de root en el HOME del usuario.
+fn running_as_root() -> bool {
+    unsafe { libc::geteuid() == 0 }
 }
 
 #[cfg(test)]

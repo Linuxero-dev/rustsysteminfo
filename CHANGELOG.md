@@ -2,6 +2,19 @@
 
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [0.6.0] - 2026-11-19
+
+### Añadido
+- **Versiones desde la base de paquetes**, sin ejecutar nada extra: dpkg y pacman se leen de disco y rpm se consulta solo por los nombres necesarios. COSMIC muestra su versión (`COSMIC 1.11.0 (Wayland)`) y el terminal también (`cosmic-term 1.11.0`). Se muestra la versión «upstream», sin epoch, revisión ni sufijos de compilación.
+- **Terminal por procesos padre** cuando no hay variables de entorno reconocibles: COSMIC Terminal, Ptyxis, GNOME Terminal, GNOME Console, foot, Ghostty, Xfce, MATE, LXTerminal, Tilix, Terminator y más. Se ignoran las sesiones remotas (`sshd`) y se evitan los nombres truncados de `comm`.
+- **`rsi --report`**: informe de detección para adjuntar a un issue (entorno, procesos padre, GPU, hwmon, versiones). No incluye usuario, nombre del equipo, IP ni números de serie.
+- Pruebas nuevas para el análisis de dpkg, pacman y rpm, y para la búsqueda del terminal con un `/proc` simulado.
+
+### Cambiado
+- `rpm -qa` y `nix-store` tienen 8 s de plazo (antes 2 s) para no devolver un conteo vacío en discos lentos.
+- Con `sudo` o como root no se usa la caché, para no dejar ficheros de root en el HOME del usuario.
+- README más corto; el historial de versiones queda en este fichero.
+
 ## [0.5.4] - 2026-11-18
 
 ### Corregido
@@ -109,6 +122,7 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 - Restos de líneas al cambiar entre layouts en el monitor en vivo.
 - Bloque de código sin cerrar en el README.
 
+[0.6.0]: https://github.com/Linuxero-dev/rustsysteminfo/compare/v0.5.4...v0.6.0
 [0.5.4]: https://github.com/Linuxero-dev/rustsysteminfo/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/Linuxero-dev/rustsysteminfo/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/Linuxero-dev/rustsysteminfo/compare/v0.5.1...v0.5.2
