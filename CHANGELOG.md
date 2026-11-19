@@ -2,6 +2,14 @@
 
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [0.5.4] - 2026-11-18
+
+### Corregido
+- **Procesos `rsi` que quedaban vivos al 100 % de un núcleo tras cerrar la terminal.** Con la terminal colgada (ventana cerrada, pestaña cerrada, sesión SSH caída), el bucle de lectura de teclado de crossterm (0.27 y también la última versión) lee 0 bytes una y otra vez sin volver nunca al código de `rsi`; por eso ni la señal SIGHUP ni las comprobaciones del bucle principal llegaban a ejecutarse. Al abrir y cerrar terminales varias veces se acumulaban procesos huérfanos.
+  - El bucle principal ahora detecta la terminal colgada (`poll` sobre la terminal) y sale limpiamente.
+  - Un hilo vigilante, independiente del bucle, termina el proceso en ~1 s si la terminal sigue colgada o si hay una señal sin atender, aunque el bucle esté atascado dentro de crossterm.
+- Pruebas nuevas que abren un pty, lo cierran y comprueban que se detecta el cuelgue.
+
 ## [0.5.3] - 2026-11-17
 
 ### Añadido
@@ -101,6 +109,7 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 - Restos de líneas al cambiar entre layouts en el monitor en vivo.
 - Bloque de código sin cerrar en el README.
 
+[0.5.4]: https://github.com/Linuxero-dev/rustsysteminfo/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/Linuxero-dev/rustsysteminfo/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/Linuxero-dev/rustsysteminfo/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/Linuxero-dev/rustsysteminfo/compare/v0.5.0...v0.5.1

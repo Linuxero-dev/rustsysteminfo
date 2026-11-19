@@ -19,6 +19,12 @@ const SAMPLE: Duration = Duration::from_millis(500);
 const CPU_WINDOW: Duration = Duration::from_millis(100);
 const CPU_FRESH: u64 = 2;
 const MIN_WAIT: Duration = Duration::from_millis(1);
+/// Cada cuánto revisa el vigilante si la terminal desapareció o el proceso no responde.
+const WATCH: Duration = Duration::from_millis(500);
+/// Revisiones seguidas con la terminal colgada (o con una señal sin atender) tras las
+/// que el vigilante termina el proceso: da ~1 s al bucle principal para salir limpiamente.
+const WATCH_GRACE: u32 = 2;
+const RESTORE_TERMINAL: &[u8] = b"\x1b[?7h\x1b[?25h\x1b[?1049l";
 
 pub type Row = (String, String);
 
@@ -26,6 +32,64 @@ static GOT_SIGTERM: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn on_sigterm(_: libc::c_int) {
     GOT_SIGTERM.store(true, Ordering::Relaxed);
+}
+
+/// Descriptores estándar que son la terminal. Se calculan al arrancar, mientras la terminal
+/// existe: una terminal colgada ya no responde a isatty().
+fn tty_fds() -> Vec<libc::c_int> {
+    [libc::STDIN_FILENO, libc::STDOUT_FILENO]
+        .into_iter()
+        // SAFETY: isatty solo consulta el descriptor.
+        .filter(|&fd| unsafe { libc::isatty(fd) } == 1)
+        .collect()
+}
+
+/// ¿Se ha colgado la terminal (ventana cerrada, sesión SSH caída...)?
+/// poll() con `events = 0` solo informa de errores: no hay nada que informar mientras
+/// la terminal vive, y POLLHUP/POLLERR en cuanto el otro extremo del pty se cierra.
+fn tty_gone(fds: &[libc::c_int]) -> bool {
+    fds.iter().any(|&fd| {
+        let mut p = libc::pollfd {
+            fd,
+            events: 0,
+            revents: 0,
+        };
+        // SAFETY: `p` es un único pollfd válido durante la llamada, que no espera (timeout 0).
+        let n = unsafe { libc::poll(&mut p, 1, 0) };
+        n > 0 && p.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0
+    })
+}
+
+/// Hilo vigilante. Con la terminal colgada, la lectura de teclado de crossterm (0.27 y
+/// también las posteriores) puede girar al 100 % de un núcleo para siempre: lee 0 bytes
+/// en un bucle interno que no vuelve a nuestro código, así que ni la señal SIGHUP ni la
+/// comprobación del bucle principal llegan a ejecutarse. Este hilo no depende de ese
+/// bucle: si la terminal sigue colgada (o hay una señal sin atender) pasado el margen,
+/// termina el proceso.
+fn spawn_watchdog(fds: Vec<libc::c_int>) {
+    let _ = thread::Builder::new()
+        .name("rsi-vigilante".into())
+        .spawn(move || {
+            let mut stuck = 0;
+            loop {
+                thread::sleep(WATCH);
+                let gone = tty_gone(&fds);
+                if gone || GOT_SIGTERM.load(Ordering::Relaxed) {
+                    stuck += 1;
+                } else {
+                    stuck = 0;
+                }
+                if stuck >= WATCH_GRACE {
+                    if !gone {
+                        // La terminal sigue viva pero el bucle no salió: se deja como estaba.
+                        let _ = out(RESTORE_TERMINAL);
+                        let _ = terminal::disable_raw_mode();
+                    }
+                    // SAFETY: _exit termina el proceso de inmediato, sin destructores.
+                    unsafe { libc::_exit(0) }
+                }
+            }
+        });
 }
 
 /// Valores instantáneos de CPU y memoria (para la salida JSON).
@@ -194,7 +258,7 @@ impl RawGuard {
 
 impl Drop for RawGuard {
     fn drop(&mut self) {
-        let _ = out(b"\x1b[?7h\x1b[?25h\x1b[?1049l");
+        let _ = out(RESTORE_TERMINAL);
         let _ = terminal::disable_raw_mode();
     }
 }
@@ -312,6 +376,9 @@ pub fn run(
         }
     }
 
+    let fds = tty_fds();
+    spawn_watchdog(fds.clone());
+
     let mut start = Instant::now();
     let mut last = start;
     let mut last_draw = start;
@@ -322,7 +389,7 @@ pub fn run(
     mon.seed(cpu_usage(cache));
 
     loop {
-        if GOT_SIGTERM.load(Ordering::Relaxed) {
+        if GOT_SIGTERM.load(Ordering::Relaxed) || tty_gone(&fds) {
             break;
         }
         let Some((cols, rows)) = size() else { break };
@@ -406,6 +473,47 @@ mod tests {
         assert!(is_quit(&key(KeyCode::Char('c'), KeyModifiers::CONTROL)));
         assert!(!is_quit(&key(KeyCode::Char('c'), KeyModifiers::NONE)));
         assert!(!is_quit(&key(KeyCode::Char(' '), KeyModifiers::NONE)));
+    }
+
+    #[test]
+    fn pipes_and_files_are_never_reported_as_a_hung_up_terminal() {
+        let mut fds = [0 as libc::c_int; 2];
+        // SAFETY: `fds` tiene sitio para los dos descriptores que escribe pipe().
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        assert!(!tty_gone(&fds));
+        // SAFETY: se cierran los descriptores que acabamos de crear.
+        unsafe {
+            libc::close(fds[0]);
+            libc::close(fds[1]);
+        }
+        assert!(!tty_gone(&[]));
+    }
+
+    #[test]
+    fn a_closed_terminal_is_detected_and_a_live_one_is_not() {
+        let (mut master, mut slave) = (0 as libc::c_int, 0 as libc::c_int);
+        // SAFETY: openpty escribe dos descriptores; el resto de argumentos son opcionales.
+        let ok = unsafe {
+            libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                std::ptr::null(),
+            )
+        };
+        if ok != 0 {
+            return; // entorno sin pty: no se puede probar aquí
+        }
+        assert!(!tty_gone(&[slave]), "una terminal viva no está colgada");
+        // SAFETY: se cierra el lado del emulador, como al cerrar la ventana.
+        unsafe { libc::close(master) };
+        assert!(
+            tty_gone(&[slave]),
+            "al cerrar la ventana se detecta el cuelgue"
+        );
+        // SAFETY: descriptor propio, abierto arriba.
+        unsafe { libc::close(slave) };
     }
 
     #[test]

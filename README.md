@@ -24,6 +24,10 @@ Una alternativa moderna a Neofetch y Fastfetch.
 - **Seguro por diseño**: el instalador verifica el SHA256 y la procedencia, y rsi limpia de secuencias de escape todo texto que lee del sistema.
 - **Se ve bien en cualquier terminal**: truecolor, 256 colores o 16, con `NO_COLOR` respetado y ancho correcto para CJK y emojis.
 
+## Novedades en 0.5.4
+
+- **Corrección importante:** si cerrabas la terminal (o se caía una sesión SSH) con `rsi` en marcha, el proceso podía quedarse vivo girando al 100 % de un núcleo hasta que lo matabas a mano. Ahora termina solo en ~1 segundo.
+
 ## Novedades en 0.5.3
 
 - **Paquete `.rpm`** para Fedora, openSUSE y derivadas (`x86_64` y `aarch64`).
@@ -72,7 +76,7 @@ Otras formas:
 curl -sSL https://raw.githubusercontent.com/Linuxero-dev/rustsysteminfo/main/install.sh | sh -s -- --local
 
 # una versión concreta
-curl -sSL https://raw.githubusercontent.com/Linuxero-dev/rustsysteminfo/main/install.sh | RSI_VERSION=v0.5.3 sh
+curl -sSL https://raw.githubusercontent.com/Linuxero-dev/rustsysteminfo/main/install.sh | RSI_VERSION=v0.5.4 sh
 
 # desinstalar
 curl -sSL https://raw.githubusercontent.com/Linuxero-dev/rustsysteminfo/main/install.sh | sh -s -- --uninstall
@@ -85,7 +89,7 @@ El instalador comprueba siempre el SHA256 y, si tienes la CLI `gh`, también la 
 Descarga el `.deb` de tu arquitectura desde [Releases](https://github.com/Linuxero-dev/rustsysteminfo/releases/latest) (`amd64` para PCs normales, `arm64` para ARM) e instálalo con `apt`, que resuelve todo y permite desinstalar con `sudo apt remove rustsysteminfo`:
 
 ```sh
-sudo apt install ./rustsysteminfo_0.5.3_amd64.deb
+sudo apt install ./rustsysteminfo_0.5.4_amd64.deb
 ```
 
 Instala `rsi` en `/usr/bin`, con la página de manual y el completado de bash, zsh y fish. Es estático: no depende de ningún otro paquete.
@@ -96,10 +100,10 @@ Descarga el `.rpm` de tu arquitectura desde [Releases](https://github.com/Linuxe
 
 ```sh
 # Fedora, RHEL y derivadas
-sudo dnf install ./rustsysteminfo-0.5.3-1.x86_64.rpm
+sudo dnf install ./rustsysteminfo-0.5.4-1.x86_64.rpm
 
 # openSUSE
-sudo zypper install --allow-unsigned-rpm ./rustsysteminfo-0.5.3-1.x86_64.rpm
+sudo zypper install --allow-unsigned-rpm ./rustsysteminfo-0.5.4-1.x86_64.rpm
 ```
 
 Se desinstala con `sudo dnf remove rustsysteminfo` o `sudo zypper remove rustsysteminfo`.
