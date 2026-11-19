@@ -3,6 +3,7 @@ mod cache;
 mod cli;
 mod completions;
 mod disks;
+mod drm;
 mod info;
 mod json;
 mod logo;

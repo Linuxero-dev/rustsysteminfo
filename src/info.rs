@@ -1,6 +1,6 @@
 use crate::cache::{self, Cache};
 use crate::ui::{clean, human};
-use crate::{pkgver, proctree};
+use crate::{drm, pkgver, proctree};
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -514,25 +514,66 @@ fn edid_refresh(edid: &[u8], mode: &str) -> Option<u32> {
     })
 }
 
+/// Nombre del monitor (descriptor `0xFC`) y diagonal en pulgadas, del EDID.
+/// El texto es ASCII imprimible: el EDID es una entrada no confiable.
+fn edid_identity(edid: &[u8]) -> (Option<String>, Option<u32>) {
+    if edid.len() < 128 {
+        return (None, None);
+    }
+    let name = [54usize, 72, 90, 108].iter().find_map(|&o| {
+        let d = &edid[o..o + 18];
+        if d[..3] != [0, 0, 0] || d[3] != 0xFC {
+            return None;
+        }
+        let t: String = d[5..]
+            .iter()
+            .take_while(|&&c| c != 0x0A)
+            .filter(|c| (0x20..0x7F).contains(*c))
+            .map(|&c| c as char)
+            .collect();
+        let t = t.trim();
+        (!t.is_empty()).then(|| t.to_string())
+    });
+    // Bytes 21 y 22: tamaño en cm (si el segundo es 0, el par es una proporción, no un tamaño).
+    let (w, h) = (f64::from(edid[21]), f64::from(edid[22]));
+    let inches = (w > 0.0 && h > 0.0).then(|| (w.hypot(h) / 2.54).round() as u32);
+    (name, inches.filter(|i| (5..=150).contains(i)))
+}
+
 fn displays() -> Option<String> {
     let mut v: Vec<String> = fs::read_dir("/sys/class/drm")
         .ok()?
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
-            let port = name.strip_prefix("card")?.split_once('-')?.1.to_string();
+            let (card, port) = name.split_once('-')?;
+            let port = port.to_string();
             let p = e.path();
             if read(p.join("status"))? != "connected" {
                 return None;
             }
-            let mode = read(p.join("modes"))?.lines().next()?.to_string();
-            let hz = fs::read(p.join("edid"))
-                .ok()
-                .and_then(|edid| edid_refresh(&edid, &mode));
-            Some(match hz {
-                Some(hz) => format!("{port}: {mode} @ {hz} Hz"),
+            let edid = fs::read(p.join("edid")).unwrap_or_default();
+            // Modo realmente activo (DRM); si no se puede, el preferido del EDID.
+            let active = read(p.join("connector_id"))
+                .and_then(|id| id.parse().ok())
+                .and_then(|id| drm::active_mode(card, id));
+            let mode = match active {
+                Some(m) => format!("{}x{}", m.width, m.height),
+                None => read(p.join("modes"))?.lines().next()?.to_string(),
+            };
+            let hz = active.map(|m| m.hz).or_else(|| edid_refresh(&edid, &mode));
+            let (model, inches) = edid_identity(&edid);
+            let mut line = match model {
+                Some(m) => format!("{port} ({m}): {mode}"),
                 None => format!("{port}: {mode}"),
-            })
+            };
+            if let Some(hz) = hz {
+                line.push_str(&format!(" @ {hz} Hz"));
+            }
+            if let Some(i) = inches {
+                line.push_str(&format!(", {i}\""));
+            }
+            Some(line)
         })
         .collect();
     v.sort();
@@ -781,6 +822,35 @@ fn gpu_vram(name: &str) -> Option<u64> {
     amd.or_else(|| name.contains("NVIDIA").then(nvidia_vram).flatten())
 }
 
+/// Driver de kernel de la primera GPU conocida (`amdgpu`, `i915`, `nouveau`,
+/// `nvidia` con su versión…), leído de sysfs.
+fn gpu_driver() -> Option<String> {
+    let mut cards: Vec<PathBuf> = fs::read_dir("/sys/class/drm")
+        .ok()?
+        .flatten()
+        .filter(|e| {
+            let n = e.file_name().to_string_lossy().into_owned();
+            n.starts_with("card") && !n.contains('-')
+        })
+        .map(|e| e.path().join("device"))
+        .collect();
+    cards.sort();
+    cards.iter().find_map(|dev| {
+        let drv = fs::read_link(dev.join("driver")).ok()?;
+        let drv = drv.file_name()?.to_string_lossy().into_owned();
+        if !drv
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+        {
+            return None;
+        }
+        Some(match read("/sys/module/nvidia/version") {
+            Some(v) if drv == "nvidia" => format!("nvidia {v}"),
+            _ => drv,
+        })
+    })
+}
+
 fn gpus() -> Option<String> {
     let list = lspci_gpus().or_else(drm_gpus)?;
     let names = list.join(", ");
@@ -790,10 +860,15 @@ fn gpus() -> Option<String> {
     } else {
         None
     };
-    Some(match vram {
+    let driver = if list.len() == 1 { gpu_driver() } else { None };
+    let mut out = match vram {
         Some(b) => format!("{names} ({})", human(b, 1)),
         None => names,
-    })
+    };
+    if let Some(d) = driver {
+        out.push_str(&format!(" [{d}]"));
+    }
+    Some(out)
 }
 
 fn battery() -> Option<String> {
@@ -884,7 +959,11 @@ fn gpu_fp() -> String {
                     }
                     let v = read(e.path().join("device/vendor")).unwrap_or_default();
                     let id = read(e.path().join("device/device")).unwrap_or_default();
-                    Some(format!("{n}:{v}:{id}"))
+                    let drv = fs::read_link(e.path().join("device/driver"))
+                        .ok()
+                        .and_then(|p| p.file_name().map(|f| f.to_string_lossy().into_owned()))
+                        .unwrap_or_default();
+                    Some(format!("{n}:{v}:{id}:{drv}"))
                 })
                 .collect()
         })
@@ -1138,6 +1217,23 @@ mod tests {
             0x02, 0x3A, 0x80, 0x18, 0x71, 0x38, 0x2D, 0x40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         ]);
         edid
+    }
+
+    #[test]
+    fn edid_identity_reads_name_and_size() {
+        let mut e = vec![0u8; 128];
+        e[21] = 41;
+        e[22] = 23;
+        e[72..90].copy_from_slice(&[
+            0, 0, 0, 0xFC, 0, b'B', b'P', b'C', b'-', b'2', b'0', b'W', b'R', 0x0A, 0x20, 0x20,
+            0x20, 0x20,
+        ]);
+        assert_eq!(edid_identity(&e), (Some("BPC-20WR".to_string()), Some(19)));
+        e[22] = 0;
+        assert_eq!(edid_identity(&e).1, None);
+        e[72 + 5] = 0x1B; // un escape nunca llega al texto
+        assert_eq!(edid_identity(&e).0.as_deref(), Some("PC-20WR"));
+        assert_eq!(edid_identity(&e[..64]), (None, None));
     }
 
     #[test]

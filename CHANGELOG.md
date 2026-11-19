@@ -2,6 +2,13 @@
 
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [0.6.1] - 2026-11-19
+
+### Añadido
+- **Frecuencia y resolución reales de la pantalla**, preguntando al kernel por DRM (conector → encoder → CRTC, solo lectura y sin sondear el conector). Antes salía la frecuencia preferida del monitor según el EDID, que no siempre es la que se está usando (un monitor a 75 Hz aparecía a 60 Hz). Si no se puede consultar (SSH, sin permisos), se usa el EDID como antes.
+- **Nombre del monitor y tamaño en pulgadas** desde el EDID: `HDMI-A-1 (BPC-20WR): 1600x900 @ 75 Hz, 19"`.
+- **Driver de la GPU** (`amdgpu`, `i915`, `nouveau`, `nvidia` con su versión) cuando hay una sola GPU, y forma parte de la huella de la caché (cambiar de driver ya la invalida).
+
 ## [0.6.0] - 2026-11-19
 
 ### Añadido
@@ -122,6 +129,7 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 - Restos de líneas al cambiar entre layouts en el monitor en vivo.
 - Bloque de código sin cerrar en el README.
 
+[0.6.1]: https://github.com/Linuxero-dev/rustsysteminfo/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Linuxero-dev/rustsysteminfo/compare/v0.5.4...v0.6.0
 [0.5.4]: https://github.com/Linuxero-dev/rustsysteminfo/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/Linuxero-dev/rustsysteminfo/compare/v0.5.2...v0.5.3

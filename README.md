@@ -50,7 +50,7 @@ Otras formas:
 curl -sSL https://raw.githubusercontent.com/Linuxero-dev/rustsysteminfo/main/install.sh | sh -s -- --local
 
 # una versión concreta
-curl -sSL https://raw.githubusercontent.com/Linuxero-dev/rustsysteminfo/main/install.sh | RSI_VERSION=v0.6.0 sh
+curl -sSL https://raw.githubusercontent.com/Linuxero-dev/rustsysteminfo/main/install.sh | RSI_VERSION=v0.6.1 sh
 
 # desinstalar
 curl -sSL https://raw.githubusercontent.com/Linuxero-dev/rustsysteminfo/main/install.sh | sh -s -- --uninstall
@@ -63,7 +63,7 @@ El instalador comprueba siempre el SHA256 y, si tienes la CLI `gh`, también la 
 Descarga el `.deb` de tu arquitectura desde [Releases](https://github.com/Linuxero-dev/rustsysteminfo/releases/latest) (`amd64` para PCs normales, `arm64` para ARM) e instálalo con `apt`, que resuelve todo y permite desinstalar con `sudo apt remove rustsysteminfo`:
 
 ```sh
-sudo apt install ./rustsysteminfo_0.6.0_amd64.deb
+sudo apt install ./rustsysteminfo_0.6.1_amd64.deb
 ```
 
 Instala `rsi` en `/usr/bin`, con la página de manual y el completado de bash, zsh y fish. Es estático: no depende de ningún otro paquete.
@@ -74,10 +74,10 @@ Descarga el `.rpm` de tu arquitectura desde [Releases](https://github.com/Linuxe
 
 ```sh
 # Fedora, RHEL y derivadas
-sudo dnf install ./rustsysteminfo-0.6.0-1.x86_64.rpm
+sudo dnf install ./rustsysteminfo-0.6.1-1.x86_64.rpm
 
 # openSUSE
-sudo zypper install --allow-unsigned-rpm ./rustsysteminfo-0.6.0-1.x86_64.rpm
+sudo zypper install --allow-unsigned-rpm ./rustsysteminfo-0.6.1-1.x86_64.rpm
 ```
 
 Se desinstala con `sudo dnf remove rustsysteminfo` o `sudo zypper remove rustsysteminfo`.
@@ -169,5 +169,5 @@ rsi --completions fish > ~/.config/fish/completions/rsi.fish
 ## Notas
 
 - La temperatura de la CPU se lee de `hwmon`; la VRAM, de sysfs (AMD) o de `nvidia-smi` (NVIDIA), y solo se muestra con una única GPU.
-- La frecuencia de refresco sale del EDID de la pantalla (la preferida del monitor, no necesariamente la activa), así que puede diferir o faltar.
+- La resolución y la frecuencia se leen del modo activo (DRM). Si no hay acceso (p. ej. por SSH), se usa el EDID, que da la frecuencia preferida del monitor y puede diferir de la real.
 - El terminal se detecta por variables de entorno y, si no hay, por los procesos padre; las versiones salen de la base de paquetes (dpkg, pacman o rpm). Con `sudo` o como root no se usa la caché.
